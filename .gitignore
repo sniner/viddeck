@@ -1,0 +1,22 @@
+# --- Rust Build ---
+# Das wichtigste Verzeichnis: Hier liegen alle Kompilate (riesig!)
+/target/
+
+# Backups von rustfmt (selten, aber möglich)
+**/*.rs.bk
+
+# --- Neovim / Vim ---
+*.swp
+*.swo
+*~
+*.un~
+session.vim
+.netrwhist
+
+# --- IDEs ---
+.vscode/
+.idea/
+
+# --- OS Junk ---
+.DS_Store
+Thumbs.db
