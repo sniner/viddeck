@@ -47,7 +47,7 @@ viddeck /path/to/my/videos
 viddeck /path/to/my/videos --host 127.0.0.1 --port 8080
 ```
 
-Once running, VidDeck will output the URL where the web interface is accessible (e.g., `http://0.0.0.0:8765`). Open this URL in your browser.
+Once running, VidDeck will output the URL where the web interface is accessible (e.g., `http://127.0.0.1:8765`). Open this URL in your browser.
 
 *Note: The first time you launch VidDeck for a large directory, it will take some time to extract metadata (duration, resolution, chapters) for all videos via `ffprobe`. You can watch the progress live in your browser.*
 

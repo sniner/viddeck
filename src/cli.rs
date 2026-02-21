@@ -13,6 +13,6 @@ pub struct Args {
     pub port: u16,
 
     /// Host to bind
-    #[arg(long, default_value = "0.0.0.0")]
+    #[arg(long, default_value = "127.0.0.1")]
     pub host: String,
 }
