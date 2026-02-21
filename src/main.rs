@@ -7,7 +7,7 @@ mod html;
 mod handlers;
 
 use clap::Parser;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::net::SocketAddr;
 use axum::{
     routing::{get, post},

@@ -1,9 +1,7 @@
-use std::path::Path;
 use std::sync::Arc;
 use walkdir::WalkDir;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-
 
 use crate::state::{AppState, VideoEntry};
 use crate::ffmpeg::get_extended_metadata;

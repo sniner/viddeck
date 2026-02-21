@@ -1,4 +1,3 @@
-use crate::ffmpeg::Chapter;
 use crate::state::VideoEntry;
 
 pub fn human_ts(sec: f64) -> String {
@@ -46,8 +45,8 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
             <body>
                 <div class="content">
                     <div class="loader" style="margin: 0 auto 20px;"></div>
-                    <h2>Bibliothek wird gescannt...</h2>
-                    <p>{} Videos gefunden</p>
+                    <h2>Scanning library...</h2>
+                    <p>{} videos found</p>
                 </div>
             </body>
             </html>
@@ -105,19 +104,19 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
                 <div class="video-info">
                     <div class="video-title" id="title-{}">
                         <span class="title-text">{}</span>
-                        <button class="btn-icon-raw" onclick="startRename('{}')" title="Umbenennen">✏️</button>
+                        <button class="btn-icon-raw" onclick="startRename('{}')" title="Rename">✏️</button>
                     </div>
                     <div class="video-meta">{}</div>
                 </div>
                 <div class="video-actions">
-                    <button class="btn-icon" onclick="openFile('{}')" title="In System-Player öffnen">
+                    <button class="btn-icon" onclick="openFile('{}')" title="Open in system player">
                         ▶️ System
                     </button>
-                    <button class="btn-icon" onclick="lb.openVideo('{}')" title="Im Browser abspielen">
+                    <button class="btn-icon" onclick="lb.openVideo('{}')" title="Play in browser">
                         🌐 Browser
                     </button>
-                    <button class="btn-icon" onclick="openDir('{}')" title="Ordner öffnen">
-                        📂 Ordner
+                    <button class="btn-icon" onclick="openDir('{}')" title="Open directory">
+                        📂 Folder
                     </button>
                 </div>
             </div>
@@ -132,8 +131,8 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
         cards.push_str(r#"
         <div class="empty-state" id="empty-state">
             <div class="empty-icon">📭</div>
-            <h3>Keine Videos gefunden</h3>
-            <p>Versuche es mit einem anderen Verzeichnis.</p>
+            <h3>No videos found</h3>
+            <p>Try a different directory.</p>
         </div>
         "#);
     }
@@ -142,8 +141,8 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
     cards.push_str(r#"
     <div class="no-results" id="no-results">
         <div class="empty-icon">🔍</div>
-        <h3>Keine Ergebnisse</h3>
-        <p>Keine Videos gefunden, die der Suche entsprechen.</p>
+        <h3>No results</h3>
+        <p>No videos found matching your search.</p>
     </div>
     "#);
 
@@ -151,24 +150,25 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
     <div class="controls-row">
         <div class="search-box">
             <span class="search-icon">🔍</span>
-            <input type="search" id="search-input" placeholder="Videos suchen..." autocomplete="off">
+            <input type="search" id="search-input" placeholder="Search videos..." autocomplete="off">
         </div>
         
         <form method="get" class="controls">
             <div class="control-group">
-                <label>Vorschau-Position</label>
+                <label>Preview Position</label>
                 <select name="mode" onchange="this.form.submit()">
-                    <option value="percent" {}>Prozent (%)</option>
-                    <option value="seconds" {}>Sekunden (s)</option>
+                    <option value="percent" {}>Percent (%)</option>
+                    <option value="seconds" {}>Seconds (s)</option>
                 </select>
                 <input type="number" name="value" value="{}" step="0.5" style="width: 80px">
             </div>
             <div class="control-group">
-                <label>Größe</label>
+                <label>Size</label>
                 <select name="width" onchange="this.form.submit()">
-                    <option value="640" {}>Klein (640px)</option>
-                    <option value="1280" {}>Mittel (1280px)</option>
-                    <option value="1920" {}>Groß (1920px)</option>
+                    <option value="640" {}>Small (640px)</option>
+                    <option value="1280" {}>Medium (1280px)</option>
+                    <option value="1920" {}>Large (1920px)</option>
+                    <option value="0" {}>Original Size</option>
                 </select>
             </div>
             <button type="submit" class="primary">Update</button>
@@ -180,7 +180,8 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
     value,
     if width == 640 { "selected" } else { "" },
     if width == 1280 { "selected" } else { "" },
-    if width == 1920 { "selected" } else { "" }
+    if width == 1920 { "selected" } else { "" },
+    if width == 0 { "selected" } else { "" }
     );
 
     format!(r#"<!doctype html>
@@ -196,7 +197,7 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
             <header>
                 <div class="header-content">
                     <h1>VidDeck</h1>
-                    <p>{} Videos in {}</p>
+                    <p>{} videos in {}</p>
                 </div>
                 {}
             </header>

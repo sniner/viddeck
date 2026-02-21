@@ -372,8 +372,8 @@ function startRename(id) {
     container.innerHTML = `
         <div class="rename-form" onclick="event.stopPropagation()">
             <input type="text" class="rename-input" id="input-${id}" value="${currentName}">
-            <button class="btn-icon-raw" onclick="submitRename('${id}')" title="Speichern">✅</button>
-            <button class="btn-icon-raw" onclick="cancelRename('${id}')" title="Abbrechen">❌</button>
+            <button class="btn-icon-raw" onclick="submitRename('${id}')" title="Save">✅</button>
+            <button class="btn-icon-raw" onclick="cancelRename('${id}')" title="Cancel">❌</button>
         </div>
     `;
     
@@ -414,10 +414,10 @@ async function submitRename(id) {
         if (res.ok) {
             window.location.reload();
         } else {
-            alert(`Fehler beim Umbenennen: ${await res.text()}`);
+            alert(`Rename failed: ${await res.text()}`);
         }
     } catch (e) {
-        alert(`Fehler: ${e}`);
+        alert(`Error: ${e}`);
     }
 }
 
@@ -500,7 +500,7 @@ const lb = {
         });
     },
     openImage(src) {
-        this.el.innerHTML = `<img src="${src}" title="Klicken zum Schließen"><button class="lightbox-close">×</button>`;
+        this.el.innerHTML = `<img src="${src}" title="Click to close"><button class="lightbox-close">×</button>`;
         this.el.classList.add('active');
     },
     openVideo(src) {

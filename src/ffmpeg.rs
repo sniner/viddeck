@@ -161,29 +161,6 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
 }
 
 pub async fn render_thumb(path: &Path, time: f64, width: u16) -> Result<Vec<u8>> {
-    let run_ffmpeg = |t: f64| -> std::process::Command {
-        let mut cmd = std::process::Command::new("ffmpeg");
-        cmd.args(&[
-            "-v", "error",
-            "-ss", &format!("{:.3}", t),
-            "-i"
-        ]);
-        cmd.arg(path);
-        cmd.args(&[
-            "-frames:v", "1",
-            "-vf", &format!("scale={}:-2", width),
-            "-f", "image2pipe",
-            "-vcodec", "mjpeg",
-            "pipe:1"
-        ]);
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        cmd
-    };
-    
-    // We use std::process because we want to capture output as Vec<u8> directly
-    // but converting to tokio::process::Command for async might be valid too.
-    // Let's stick to Tokio for consistency within async context.
-    
     let mut cmd = Command::new("ffmpeg");
     cmd.args(&[
         "-v", "error",
@@ -191,9 +168,12 @@ pub async fn render_thumb(path: &Path, time: f64, width: u16) -> Result<Vec<u8>>
         "-i"
     ]);
     cmd.arg(path);
+    
+    cmd.args(&["-frames:v", "1"]);
+    if width > 0 {
+        cmd.args(&["-vf", &format!("scale={}:-2", width)]);
+    }
     cmd.args(&[
-        "-frames:v", "1",
-        "-vf", &format!("scale={}:-2", width),
         "-f", "image2pipe",
         "-vcodec", "mjpeg",
         "pipe:1"
@@ -213,9 +193,12 @@ pub async fn render_thumb(path: &Path, time: f64, width: u16) -> Result<Vec<u8>>
             "-i"
         ]);
         cmd.arg(path);
+        
+        cmd.args(&["-frames:v", "1"]);
+        if width > 0 {
+            cmd.args(&["-vf", &format!("scale={}:-2", width)]);
+        }
         cmd.args(&[
-            "-frames:v", "1",
-            "-vf", &format!("scale={}:-2", width),
             "-f", "image2pipe",
             "-vcodec", "mjpeg",
             "pipe:1"

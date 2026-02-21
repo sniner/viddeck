@@ -3,19 +3,17 @@ use axum::{
     response::{Html, IntoResponse, Response},
     http::{StatusCode, header},
     Form,
-    body::Body,
 };
 use std::sync::Arc;
 use serde::Deserialize;
-use tokio::fs::File;
-use tokio_util::io::ReaderStream;
+
 use tower_http::services::ServeFile;
 use tower::ServiceExt; 
 
 use crate::state::AppState;
 use crate::assets::{STYLESHEET, JAVASCRIPT};
 use crate::html::generate_index_html;
-use crate::ffmpeg::{render_thumb, Chapter};
+use crate::ffmpeg::render_thumb;
 use base64::Engine;
 
 // Query Params
@@ -91,7 +89,7 @@ pub async fn thumb_handler(
     
     // Clamp width
     if width > 1920 { width = 1920; }
-    if width < 100 { width = 640; }
+    if width < 100 && width != 0 { width = 640; }
 
     let cache_key = format!("{}-{}-{}-{}-{}", id, idx, mode, value, width);
 

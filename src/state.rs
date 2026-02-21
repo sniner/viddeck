@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::path::PathBuf;
+use std::sync::RwLock;
 use serde::Serialize;
 use crate::ffmpeg::VideoMetadata;
 use std::collections::HashMap;
