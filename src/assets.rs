@@ -523,5 +523,14 @@ document.addEventListener('DOMContentLoaded', () => {
     lb.init();
     initSettings();
     initSearch();
+    
+    // Connect to SSE for auto-refresh
+    const evtSource = new EventSource("/api/events");
+    evtSource.addEventListener("message", (e) => {
+        if (e.data === "refresh") {
+            console.log("Filesystem change detected, refreshing...");
+            window.location.reload();
+        }
+    });
 });
 "#;

@@ -15,4 +15,8 @@ pub struct Args {
     /// Host to bind
     #[arg(long, default_value = "127.0.0.1")]
     pub host: String,
+
+    /// Watch for filesystem changes
+    #[arg(short, long)]
+    pub watch: bool,
 }
