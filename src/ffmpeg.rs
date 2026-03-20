@@ -38,7 +38,9 @@ struct FFProbeFormat {
 
 #[derive(Deserialize)]
 struct FFProbeStream {
-    codec_type: Option<String>,
+    #[serde(default)]
+    codec_type: String,
+    #[serde(default)]
     codec_name: String,
     width: Option<u32>,
     height: Option<u32>,
@@ -89,7 +91,7 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
     let size = fmt.size.parse::<u64>().unwrap_or(0);
 
     let (width, height, fps_str, codec, audio_codecs) = if let Some(streams) = raw.streams {
-        let video = streams.iter().find(|s| s.codec_type.as_deref() == Some("video"));
+        let video = streams.iter().find(|s| s.codec_type == "video");
         let (w, h, fps_str, vc) = if let Some(s) = video {
             (s.width.unwrap_or(0), s.height.unwrap_or(0), s.avg_frame_rate.clone(), s.codec_name.clone())
         } else {
@@ -97,7 +99,7 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
         };
         let mut seen = std::collections::HashSet::new();
         let audio: Vec<String> = streams.iter()
-            .filter(|s| s.codec_type.as_deref() == Some("audio"))
+            .filter(|s| s.codec_type == "audio")
             .map(|s| s.codec_name.to_uppercase())
             .filter(|c| seen.insert(c.clone()))
             .collect();
