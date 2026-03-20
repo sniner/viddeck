@@ -18,7 +18,7 @@ use state::AppState;
 use scanner::scan_library;
 use handlers::{
     index_handler, style_handler, script_handler, thumb_handler, video_handler,
-    api_open_handler, api_open_dir_handler, api_rename_handler
+    api_open_handler, api_open_dir_handler, api_rename_handler, sse_handler
 };
 
 #[tokio::main]
@@ -33,15 +33,18 @@ async fn main() -> anyhow::Result<()> {
     println!("Scanning {:?} for videos...", root);
 
     // Init State
-    let state = Arc::new(AppState::new(root.clone()));
+    let (tx, _rx) = tokio::sync::broadcast::channel(100);
+    let state = Arc::new(AppState::new(root.clone(), tx));
     
     // Start background scan
     let state_clone = state.clone();
     tokio::spawn(async move {
         scan_library(state_clone).await;
-        // println!("Scan finished."); 
-        // Note: In real app we might want to log this or notify UI via websocket
     });
+
+    if args.watch {
+        crate::scanner::start_watcher(state.clone());
+    }
 
     // Setup Router
     let app = Router::new()
@@ -53,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/open_file", post(api_open_handler))
         .route("/api/open_dir", post(api_open_dir_handler))
         .route("/api/rename", post(api_rename_handler))
+        .route("/api/events", get(sse_handler))
         .with_state(state);
 
     let addr_str = format!("{}:{}", args.host, args.port);

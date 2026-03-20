@@ -45,6 +45,9 @@ viddeck /path/to/my/videos
 
 # Bind to a specific host and port
 viddeck /path/to/my/videos --host 127.0.0.1 --port 8080
+
+# Automatically watch the directory for changes and refresh the UI
+viddeck /path/to/my/videos --watch
 ```
 
 Once running, VidDeck will output the URL where the web interface is accessible (e.g., `http://127.0.0.1:8765`). Open this URL in your browser.

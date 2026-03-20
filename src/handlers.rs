@@ -1,9 +1,13 @@
 use axum::{
     extract::{Path, Query, State},
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Response, sse::{Event, Sse}},
     http::{StatusCode, header},
     Form,
 };
+use std::convert::Infallible;
+use futures_util::stream::Stream;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 use std::sync::Arc;
 use serde::Deserialize;
 
@@ -20,7 +24,7 @@ use base64::Engine;
 #[derive(Deserialize)]
 pub struct IndexParams {
     pub mode: Option<String>,
-    pub value: Option<f64>,
+    pub offset: Option<f64>,
     pub width: Option<u32>,
 }
 
@@ -29,7 +33,7 @@ pub async fn index_handler(
     Query(params): Query<IndexParams>,
 ) -> impl IntoResponse {
     let mode = params.mode.unwrap_or_else(|| "percent".to_string());
-    let value = params.value.unwrap_or(50.0);
+    let offset = params.offset.unwrap_or(50.0);
     let width = params.width.unwrap_or(1280);
     
     // Check scanning status
@@ -37,34 +41,36 @@ pub async fn index_handler(
     let count = state.videos.read().unwrap().len();
     let root = state.root.to_string_lossy().to_string();
 
-    // Clone videos for rendering to avoid holding lock too long
-    // (In a real app with thousands of videos, we might want pagination)
     let videos = {
         let v = state.videos.read().unwrap();
         v.clone()
     };
 
-    let html = generate_index_html(&videos, count, &root, &mode, value, width, scanning);
+    let html = generate_index_html(&videos, count, &root, &mode, offset, width, scanning);
     Html(html)
 }
 
 pub async fn style_handler() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/css")], STYLESHEET)
+    ([
+        (header::CONTENT_TYPE, "text/css"),
+        (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+    ], STYLESHEET)
 }
 
 pub async fn script_handler() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "application/javascript")], JAVASCRIPT)
+    ([
+        (header::CONTENT_TYPE, "application/javascript"),
+        (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+    ], JAVASCRIPT)
 }
 
 #[derive(Deserialize)]
 pub struct ThumbParams {
     pub mode: Option<String>,
-    pub value: Option<f64>,
+    pub offset: Option<f64>,
     pub width: Option<u32>,
 }
 
-// Simple in-memory LRU cache using moka
-// We declare it in main or use a global static for simplicity in this script-like tool
 use lazy_static::lazy_static;
 use moka::future::Cache;
 
@@ -80,7 +86,7 @@ pub async fn thumb_handler(
     Query(params): Query<ThumbParams>,
 ) ->  Result<impl IntoResponse, StatusCode> {
     let mode = params.mode.unwrap_or_else(|| "percent".to_string());
-    let value = params.value.unwrap_or(50.0);
+    let offset = params.offset.unwrap_or(50.0);
     let mut width = params.width.unwrap_or(1280);
     
     // Parse idx from "0.jpg" -> 0
@@ -91,7 +97,7 @@ pub async fn thumb_handler(
     if width > 1920 { width = 1920; }
     if width < 100 && width != 0 { width = 640; }
 
-    let cache_key = format!("{}-{}-{}-{}-{}", id, idx, mode, value, width);
+    let cache_key = format!("{}-{}-{}-{}-{}", id, idx, mode, offset, width);
 
     if let Some(data) = THUMB_CACHE.get(&cache_key).await {
         return Ok(([(header::CONTENT_TYPE, "image/jpeg")], data).into_response());
@@ -117,9 +123,9 @@ pub async fn thumb_handler(
     // Calculate timestamp
     let length = (chapter.end - chapter.start).max(0.01);
     let ts = if mode == "seconds" {
-        chapter.start + value
+        chapter.start + offset
     } else {
-        let p = value.clamp(0.0, 100.0) / 100.0;
+        let p = offset.clamp(0.0, 100.0) / 100.0;
         chapter.start + (p * length)
     };
     let ts = ts.clamp(chapter.start, chapter.end);
@@ -216,15 +222,12 @@ pub async fn api_rename_handler(
     
     let old_path = old_path.ok_or((StatusCode::NOT_FOUND, "File not found".into()))?;
     
-    // 2. Resolve new path (relative to root)
-    // Security check: simple check against '..' traversal
+    // Resolve new path (relative to root)
     if new_name.contains("..") || new_name.starts_with("/") || new_name.starts_with("\\") {
         return Err((StatusCode::BAD_REQUEST, "Invalid filename".into()));
     }
 
-    let new_path = state.root.join(new_name); // This assumes new_name is relative path?
-    // Wait, the python scripts says "Treat new_name as relative to root"
-    // Let's stick to that logic
+    let new_path = state.root.join(new_name);
     
     if new_path.exists() {
          return Err((StatusCode::CONFLICT, "File already exists".into()));
@@ -235,14 +238,7 @@ pub async fn api_rename_handler(
         tokio::fs::create_dir_all(parent).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
     
-    // Rename
     tokio::fs::rename(&old_path, &new_path).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    
-    // Update State
-    // We need to update ID map and VideoEntry list
-    // Since we hold a write lock, we should be careful.
-    // For simplicity, we just trigger a rescan or update in place.
-    // Updating in place is faster.
     
     let new_id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(new_path.to_string_lossy().as_bytes());
     let new_rel_path = new_path.strip_prefix(&state.root).unwrap_or(&new_path).to_path_buf();
@@ -251,12 +247,9 @@ pub async fn api_rename_handler(
         let mut videos = state.videos.write().unwrap();
         let mut map = state.id_map.write().unwrap();
         
-        // Remove old map entry
         map.remove(id);
-        // Add new map entry
         map.insert(new_id.clone(), new_path.clone());
         
-        // Find and update video entry
         if let Some(entry) = videos.iter_mut().find(|v| v.id == *id) {
             entry.id = new_id;
             entry.path = new_path;
@@ -265,4 +258,20 @@ pub async fn api_rename_handler(
     }
 
     Ok("OK")
+}
+
+pub async fn sse_handler(
+    State(state): State<Arc<AppState>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.tx.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|res: Result<(), tokio_stream::wrappers::errors::BroadcastStreamRecvError>| {
+        // We ignore broadcast lag errors
+        if res.is_ok() {
+            Some(Ok(Event::default().data("refresh")))
+        } else {
+            None
+        }
+    });
+
+    Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::new())
 }

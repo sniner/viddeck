@@ -8,6 +8,9 @@ pub const STYLESHEET: &str = r#"
     --text-muted: #6b7280;
     --border: #e5e7eb;
     --thumb-bg: #e5e7eb;
+    --shadow-sm:    0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md:    0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.05);
+    --shadow-hover: 0 14px 36px rgba(0,0,0,0.14), 0 5px 14px rgba(0,0,0,0.09);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -20,6 +23,9 @@ pub const STYLESHEET: &str = r#"
         --text-muted: #9ca3af;
         --border: #374151;
         --thumb-bg: #374151;
+        --shadow-sm:    0 1px 3px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.18);
+        --shadow-md:    0 4px 12px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.25);
+        --shadow-hover: 0 14px 36px rgba(0,0,0,0.55), 0 5px 14px rgba(0,0,0,0.40);
     }
 }
 
@@ -45,6 +51,7 @@ header {
     padding: 20px;
     margin-bottom: 24px;
     border: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
     display: flex;
     flex-wrap: wrap; 
     justify-content: space-between;
@@ -121,7 +128,7 @@ label {
 select, input {
     padding: 6px 10px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--bg);
     font-size: 0.875rem;
     color: var(--text-main);
@@ -129,13 +136,13 @@ select, input {
 
 button.primary {
     background: var(--primary);
-    color: white; 
+    color: white;
     border: none;
     padding: 6px 14px;
-    border-radius: 6px;
+    border-radius: 8px;
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.2s;
+    transition: background 0.2s ease;
 }
 button.primary:hover { background: var(--primary-hover); }
 
@@ -145,6 +152,8 @@ button.primary:hover { background: var(--primary-hover); }
     border-radius: 12px;
     margin-bottom: 24px;
     border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.25s ease;
 }
 
 .video-header {
@@ -192,7 +201,7 @@ button.primary:hover { background: var(--primary-hover); }
     border: 1px solid var(--border);
     color: var(--text-muted);
     padding: 4px 8px;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
     font-size: 0.8rem;
     display: flex;
@@ -248,13 +257,11 @@ button.primary:hover { background: var(--primary-hover); }
     border-radius: 8px;
     overflow: hidden;
     background: var(--thumb-bg);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-    border: 1px solid transparent;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
 }
 .chapter-item:hover {
-    border-color: var(--primary);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    transform: translateY(-2px);
+    box-shadow: var(--shadow-hover);
+    transform: translateY(-5px);
     z-index: 5;
 }
 
@@ -328,6 +335,29 @@ button.primary:hover { background: var(--primary-hover); }
 }
 .lightbox-close:hover { opacity: 1; }
 
+.lightbox-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+}
+.lightbox-btn {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    border: 1.5px solid rgba(255,255,255,0.35);
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s ease, background 0.2s ease;
+}
+.lightbox-btn:hover {
+    background: rgba(255,255,255,0.28);
+    transform: scale(1.1);
+}
+
 .lightbox video {
     max-width: 100%;
     max-height: 85vh;
@@ -338,6 +368,39 @@ button.primary:hover { background: var(--primary-hover); }
 .empty-state { text-align: center; padding: 80px; color: var(--text-muted); }
 .empty-icon { font-size: 48px; margin-bottom: 16px; }
 .no-results { text-align: center; padding: 40px; color: var(--text-muted); display: none; }
+
+/* Tab Bar */
+.tab-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+
+.tab-btn {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 6px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.15s ease;
+    box-shadow: var(--shadow-sm);
+}
+
+.tab-btn:hover {
+    color: var(--text-main);
+    border-color: var(--text-muted);
+}
+
+.tab-btn.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
 "#;
 
 pub const JAVASCRIPT: &str = r#"
@@ -426,13 +489,13 @@ const CONFIG_KEY = 'viddeck_config';
 
 function initSettings() {
     const urlParams = new URLSearchParams(window.location.search);
-    const hasParams = urlParams.has('mode') || urlParams.has('value') || urlParams.has('width');
+    const hasParams = urlParams.has('mode') || urlParams.has('offset') || urlParams.has('width');
     
     if (hasParams) {
         // Save current state
         const settings = {
             mode: urlParams.get('mode'),
-            value: urlParams.get('value'),
+            offset: urlParams.get('offset'),
             width: urlParams.get('width')
         };
         localStorage.setItem(CONFIG_KEY, JSON.stringify(settings));
@@ -443,7 +506,7 @@ function initSettings() {
             if (stored) {
                 const newUrl = new URL(window.location);
                 if (stored.mode) newUrl.searchParams.set('mode', stored.mode);
-                if (stored.value) newUrl.searchParams.set('value', stored.value);
+                if (stored.offset) newUrl.searchParams.set('offset', stored.offset);
                 if (stored.width) newUrl.searchParams.set('width', stored.width);
                 window.location.replace(newUrl);
             }
@@ -451,33 +514,131 @@ function initSettings() {
     }
 }
 
+// Tab Pagination
+const TAB_PAGE_SIZE = 50;
+
+function initTabs() {
+    const tabBar = document.querySelector('.tab-bar');
+    if (!tabBar) return;
+
+    const allCards = Array.from(document.querySelectorAll('.video-card'));
+    const originalHTML = tabBar.innerHTML;
+    const originalTabCount = tabBar.querySelectorAll('.tab-btn').length;
+
+    let activeTab = parseInt(sessionStorage.getItem('viddeck_tab') || '0');
+    if (activeTab >= originalTabCount) activeTab = 0;
+
+    let searchMatches = null; // null = normal mode, Array = search mode
+
+    function setActiveButton(n) {
+        tabBar.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.classList.toggle('active', parseInt(btn.dataset.tab) === n);
+        });
+    }
+
+    function showNormalTab(n) {
+        activeTab = n;
+        sessionStorage.setItem('viddeck_tab', n);
+        allCards.forEach(card => {
+            card.style.display = parseInt(card.dataset.tab) === n ? '' : 'none';
+        });
+        setActiveButton(n);
+    }
+
+    function showSearchPage(n) {
+        const start = n * TAB_PAGE_SIZE;
+        allCards.forEach(card => card.style.display = 'none');
+        searchMatches.slice(start, start + TAB_PAGE_SIZE).forEach(card => card.style.display = '');
+        setActiveButton(n);
+    }
+
+    function buildSearchTabs(count, page) {
+        const pageCount = Math.ceil(count / TAB_PAGE_SIZE);
+        tabBar.innerHTML = '';
+        for (let t = 0; t < pageCount; t++) {
+            const start = t * TAB_PAGE_SIZE + 1;
+            const end = Math.min((t + 1) * TAB_PAGE_SIZE, count);
+            const btn = document.createElement('button');
+            btn.className = 'tab-btn' + (t === page ? ' active' : '');
+            btn.dataset.tab = t;
+            btn.textContent = `${start}\u2013${end}`;
+            tabBar.appendChild(btn);
+        }
+    }
+
+    tabBar.addEventListener('click', e => {
+        const btn = e.target.closest('.tab-btn');
+        if (!btn) return;
+        const n = parseInt(btn.dataset.tab);
+        if (searchMatches !== null) {
+            showSearchPage(n);
+        } else {
+            showNormalTab(n);
+        }
+    });
+
+    showNormalTab(activeTab);
+
+    window._tabEnterSearch = function(matches) {
+        searchMatches = matches;
+        if (matches.length === 0) {
+            tabBar.style.display = 'none';
+            allCards.forEach(card => card.style.display = 'none');
+        } else {
+            tabBar.style.display = '';
+            buildSearchTabs(matches.length, 0);
+            showSearchPage(0);
+        }
+    };
+
+    window._tabExitSearch = function() {
+        searchMatches = null;
+        tabBar.style.display = '';
+        tabBar.innerHTML = originalHTML;
+        showNormalTab(activeTab);
+    };
+}
+
 // Live Search
 function initSearch() {
     const searchInput = document.getElementById('search-input');
     if (!searchInput) return;
 
+    const allCards = Array.from(document.querySelectorAll('.video-card'));
+
     function performSearch(term) {
         const lowerTerm = term.toLowerCase().trim();
-        const cards = document.querySelectorAll('.video-card');
-        let visibleCount = 0;
-
-        cards.forEach(card => {
-            const title = card.querySelector('.video-title').textContent.toLowerCase();
-            const relPath = card.getAttribute('data-path') || '';
-            const match = title.includes(lowerTerm) || relPath.includes(lowerTerm);
-            card.style.display = match ? '' : 'none';
-            if (match) visibleCount++;
-        });
-
         const noResults = document.getElementById('no-results');
-        if (noResults) noResults.style.display = (visibleCount === 0 && cards.length > 0) ? 'block' : 'none';
-        
+
+        if (lowerTerm) {
+            const matches = allCards.filter(card => {
+                const title = card.querySelector('.video-title').textContent.toLowerCase();
+                const relPath = card.getAttribute('data-path') || '';
+                return title.includes(lowerTerm) || relPath.includes(lowerTerm);
+            });
+
+            if (window._tabEnterSearch) {
+                window._tabEnterSearch(matches);
+            } else {
+                allCards.forEach(card => card.style.display = 'none');
+                matches.forEach(card => card.style.display = '');
+            }
+
+            if (noResults) noResults.style.display = matches.length === 0 ? 'block' : 'none';
+        } else {
+            if (window._tabExitSearch) {
+                window._tabExitSearch();
+            } else {
+                allCards.forEach(card => card.style.display = '');
+            }
+            if (noResults) noResults.style.display = 'none';
+        }
+
         sessionStorage.setItem('viddeck_search', term);
     }
 
     searchInput.addEventListener('input', (e) => performSearch(e.target.value));
 
-    // Restore state
     const stored = sessionStorage.getItem('viddeck_search');
     if (stored) {
         searchInput.value = stored;
@@ -503,6 +664,17 @@ const lb = {
         this.el.innerHTML = `<img src="${src}" title="Click to close"><button class="lightbox-close">×</button>`;
         this.el.classList.add('active');
     },
+    openChapter(imgSrc, playUrl, startSec) {
+        const t = Math.floor(startSec);
+        this.el.innerHTML = `
+            <img src="${imgSrc}" title="Click to close">
+            <div class="lightbox-actions">
+                <button class="lightbox-btn" onclick="event.stopPropagation(); lb.openVideoAt('${playUrl}', ${t})" title="Im Browser abspielen"><svg viewBox="0 0 24 24" width="22" height="22" fill="white"><path d="M8 5v14l11-7z"/></svg></button>
+            </div>
+            <button class="lightbox-close">×</button>
+        `;
+        this.el.classList.add('active');
+    },
     openVideo(src) {
         this.el.innerHTML = `
             <video controls autoplay onclick="event.stopPropagation()">
@@ -513,6 +685,18 @@ const lb = {
         `;
         this.el.classList.add('active');
     },
+    openVideoAt(src, t) {
+        this.el.innerHTML = `
+            <video id="lb-video" controls autoplay onclick="event.stopPropagation()">
+                <source src="${src}" type="video/mp4">
+                Your browser does not support the video tag.
+            </video>
+            <button class="lightbox-close">×</button>
+        `;
+        this.el.classList.add('active');
+        const v = document.getElementById('lb-video');
+        v.addEventListener('loadedmetadata', () => { v.currentTime = t; });
+    },
     close() {
         this.el.classList.remove('active');
         this.el.innerHTML = '';
@@ -522,6 +706,16 @@ const lb = {
 document.addEventListener('DOMContentLoaded', () => {
     lb.init();
     initSettings();
+    initTabs();
     initSearch();
+    
+    // Connect to SSE for auto-refresh
+    const evtSource = new EventSource("/api/events");
+    evtSource.addEventListener("message", (e) => {
+        if (e.data === "refresh") {
+            console.log("Filesystem change detected, refreshing...");
+            window.location.reload();
+        }
+    });
 });
 "#;

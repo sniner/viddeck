@@ -26,7 +26,9 @@ pub fn human_size(size_bytes: u64) -> String {
     format!("{:.1} TB", size)
 }
 
-pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str, mode: &str, value: f64, width: u32, scanning: bool) -> String {
+const PAGE_SIZE: usize = 50;
+
+pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str, mode: &str, offset: f64, width: u32, scanning: bool) -> String {
     if scanning {
         return format!(r#"<!doctype html>
             <html>
@@ -54,14 +56,15 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
     }
 
     let mut cards = String::new();
-    
-    for v in videos {
+
+    for (i, v) in videos.iter().enumerate() {
+        let tab_idx = i / PAGE_SIZE;
         let meta = &v.meta;
         let vid_id = &v.id;
         
         let mut ch_html = String::new();
         for (i, ch) in meta.chapters.iter().enumerate() {
-            let img_url = format!("/thumb/{}/{}.jpg?mode={}&value={}&width={}", vid_id, i, mode, value, width);
+            let img_url = format!("/thumb/{}/{}.jpg?mode={}&offset={}&width={}", vid_id, i, mode, offset, width);
             let ch_title = html_escape::encode_text(&ch.title);
             let fallback_title = format!("Chapter {}", i + 1);
             let title = if ch.title.is_empty() { fallback_title.as_str() } else { ch_title.as_ref() };
@@ -69,13 +72,13 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
             
             ch_html.push_str(&format!(r#"
             <div class="chapter-item">
-                <img class="chapter-thumb" src="{}" loading="lazy" onclick="lb.openImage('{}')">
+                <img class="chapter-thumb" src="{}" loading="lazy" onclick="lb.openChapter('{}', '{}', {})">
                 <div class="chapter-overlay">
                     <div class="chapter-time">{}</div>
                     <div class="chapter-title" title="{}">{}</div>
                 </div>
             </div>
-            "#, img_url, img_url, dur_fmt, title, title));
+            "#, img_url, img_url, format!("/video/{}", vid_id), ch.start, dur_fmt, title, title));
         }
         
         // Chips
@@ -91,6 +94,15 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
         if !meta.codec.is_empty() {
             chips.push_str(&format!("<span>⚙️ {}</span>", html_escape::encode_text(&meta.codec)));
         }
+        if !meta.audio_codecs.is_empty() {
+            let browser_compat = ["AAC", "MP3", "OPUS", "VORBIS", "FLAC", "PCM", "MP2"];
+            let incompatible = meta.audio_codecs.iter().any(|c| {
+                !browser_compat.iter().any(|ok| c.contains(ok))
+            });
+            let label = meta.audio_codecs.join(", ");
+            let icon = if incompatible { "🔇" } else { "🔊" };
+            chips.push_str(&format!("<span>{} {}</span>", icon, html_escape::encode_text(&label)));
+        }
 
         let play_url = format!("/video/{}", vid_id);
         let rel_path_str = v.rel_path.to_string_lossy();
@@ -99,7 +111,7 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
         let rel_path_data_esc = html_escape::encode_text(&rel_path_lower);
 
         cards.push_str(&format!(r#"
-        <div class="video-card" data-path="{}">
+        <div class="video-card" data-path="{}" data-tab="{}">
             <div class="video-header">
                 <div class="video-info">
                     <div class="video-title" id="title-{}">
@@ -124,7 +136,7 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
                 {}
             </div>
         </div>
-        "#, rel_path_data_esc, vid_id, rel_path_esc, vid_id, chips, vid_id, play_url, vid_id, ch_html));
+        "#, rel_path_data_esc, tab_idx, vid_id, rel_path_esc, vid_id, chips, vid_id, play_url, vid_id, ch_html));
     }
 
     if cards.is_empty() {
@@ -146,6 +158,23 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
     </div>
     "#);
 
+    let tab_count = (videos.len() + PAGE_SIZE - 1) / PAGE_SIZE;
+    let tab_bar = if tab_count > 1 {
+        let mut html = String::from(r#"<div class="tab-bar">"#);
+        for t in 0..tab_count {
+            let start = t * PAGE_SIZE + 1;
+            let end = ((t + 1) * PAGE_SIZE).min(videos.len());
+            html.push_str(&format!(
+                r#"<button class="tab-btn{}" data-tab="{}">{}–{}</button>"#,
+                if t == 0 { " active" } else { "" }, t, start, end
+            ));
+        }
+        html.push_str("</div>");
+        html
+    } else {
+        String::new()
+    };
+
     let controls = format!(r#"
     <div class="controls-row">
         <div class="search-box">
@@ -160,7 +189,7 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
                     <option value="percent" {}>Percent (%)</option>
                     <option value="seconds" {}>Seconds (s)</option>
                 </select>
-                <input type="number" name="value" value="{}" step="0.5" style="width: 80px">
+                <input type="number" name="offset" value="{}" step="0.5" style="width: 80px">
             </div>
             <div class="control-group">
                 <label>Size</label>
@@ -177,7 +206,7 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
     "#, 
     if mode == "percent" { "selected" } else { "" },
     if mode == "seconds" { "selected" } else { "" },
-    value,
+    offset,
     if width == 640 { "selected" } else { "" },
     if width == 1280 { "selected" } else { "" },
     if width == 1920 { "selected" } else { "" },
@@ -202,10 +231,11 @@ pub fn generate_index_html(videos: &[VideoEntry], count: usize, root_path: &str,
                 {}
             </header>
             {}
+            {}
         </div>
         <div id="lightbox" class="lightbox"></div>
         <script src="/script.js"></script>
     </body>
     </html>
-    "#, count, html_escape::encode_text(root_path), controls, cards)
+    "#, count, html_escape::encode_text(root_path), controls, tab_bar, cards)
 }

@@ -12,6 +12,7 @@ pub struct VideoMetadata {
     pub height: u32,
     pub fps: f64,
     pub codec: String,
+    pub audio_codecs: Vec<String>,
     pub chapters: Vec<Chapter>,
 }
 
@@ -37,10 +38,12 @@ struct FFProbeFormat {
 
 #[derive(Deserialize)]
 struct FFProbeStream {
+    codec_type: Option<String>,
+    codec_name: String,
     width: Option<u32>,
     height: Option<u32>,
+    #[serde(default)]
     avg_frame_rate: String,
-    codec_name: String,
 }
 
 #[derive(Deserialize)]
@@ -63,8 +66,7 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
             "-v", "error",
             "-print_format", "json",
             "-show_entries", "format=duration,size,bit_rate",
-            "-show_entries", "stream=width,height,avg_frame_rate,codec_name",
-            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_type,codec_name,width,height,avg_frame_rate",
             "-show_chapters",
         ])
         .arg(path)
@@ -86,19 +88,22 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
     let duration = fmt.duration.parse::<f64>().unwrap_or(0.0);
     let size = fmt.size.parse::<u64>().unwrap_or(0);
 
-    let (width, height, fps_str, codec) = if let Some(streams) = raw.streams {
-        if let Some(s) = streams.get(0) {
-            (
-                s.width.unwrap_or(0),
-                s.height.unwrap_or(0),
-                s.avg_frame_rate.clone(),
-                s.codec_name.clone(),
-            )
+    let (width, height, fps_str, codec, audio_codecs) = if let Some(streams) = raw.streams {
+        let video = streams.iter().find(|s| s.codec_type.as_deref() == Some("video"));
+        let (w, h, fps_str, vc) = if let Some(s) = video {
+            (s.width.unwrap_or(0), s.height.unwrap_or(0), s.avg_frame_rate.clone(), s.codec_name.clone())
         } else {
             (0, 0, "0/0".to_string(), "unknown".to_string())
-        }
+        };
+        let mut seen = std::collections::HashSet::new();
+        let audio: Vec<String> = streams.iter()
+            .filter(|s| s.codec_type.as_deref() == Some("audio"))
+            .map(|s| s.codec_name.to_uppercase())
+            .filter(|c| seen.insert(c.clone()))
+            .collect();
+        (w, h, fps_str, vc, audio)
     } else {
-        (0, 0, "0/0".to_string(), "unknown".to_string())
+        (0, 0, "0/0".to_string(), "unknown".to_string(), vec![])
     };
 
     // Calculate float FPS
@@ -156,6 +161,7 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
         height,
         fps,
         codec,
+        audio_codecs,
         chapters,
     })
 }
