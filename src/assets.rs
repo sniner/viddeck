@@ -205,7 +205,6 @@ button.primary:hover { background: var(--primary-hover); }
     cursor: pointer;
     font-size: 0.8rem;
     display: flex;
-    display: flex;
     align-items: center;
     gap: 6px;
     transition: all 0.2s;
@@ -280,7 +279,7 @@ button.primary:hover { background: var(--primary-hover); }
     bottom: 0;
     left: 0;
     right: 0;
-    background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 60%, transparent 100%);
+    background: linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 50%, transparent 100%);
     padding: 30px 12px 10px;
     color: white;
     pointer-events: none;
@@ -647,7 +646,7 @@ function initSearch() {
 }
 
 
-// Lightbox
+// Lightbox — uses DOM APIs to avoid XSS via innerHTML
 const lb = {
     el: null,
     init() {
@@ -660,41 +659,69 @@ const lb = {
             if (e.key === 'Escape') this.close();
         });
     },
+    _clear() {
+        this.el.innerHTML = '';
+    },
+    _addCloseBtn() {
+        const btn = document.createElement('button');
+        btn.className = 'lightbox-close';
+        btn.textContent = '\u00d7';
+        this.el.appendChild(btn);
+    },
+    _createVideo(src) {
+        const video = document.createElement('video');
+        video.controls = true;
+        video.autoplay = true;
+        video.addEventListener('click', (e) => e.stopPropagation());
+        const source = document.createElement('source');
+        source.src = src;
+        source.type = 'video/mp4';
+        video.appendChild(source);
+        return video;
+    },
     openImage(src) {
-        this.el.innerHTML = `<img src="${src}" title="Click to close"><button class="lightbox-close">×</button>`;
+        this._clear();
+        const img = document.createElement('img');
+        img.src = src;
+        img.title = 'Click to close';
+        this.el.appendChild(img);
+        this._addCloseBtn();
         this.el.classList.add('active');
     },
     openChapter(imgSrc, playUrl, startSec) {
         const t = Math.floor(startSec);
-        this.el.innerHTML = `
-            <img src="${imgSrc}" title="Click to close">
-            <div class="lightbox-actions">
-                <button class="lightbox-btn" onclick="event.stopPropagation(); lb.openVideoAt('${playUrl}', ${t})" title="Im Browser abspielen"><svg viewBox="0 0 24 24" width="22" height="22" fill="white"><path d="M8 5v14l11-7z"/></svg></button>
-            </div>
-            <button class="lightbox-close">×</button>
-        `;
+        this._clear();
+        const img = document.createElement('img');
+        img.src = imgSrc;
+        img.title = 'Click to close';
+        this.el.appendChild(img);
+
+        const actions = document.createElement('div');
+        actions.className = 'lightbox-actions';
+        const playBtn = document.createElement('button');
+        playBtn.className = 'lightbox-btn';
+        playBtn.title = 'Im Browser abspielen';
+        playBtn.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="white"><path d="M8 5v14l11-7z"/></svg>';
+        playBtn.addEventListener('click', (e) => { e.stopPropagation(); lb.openVideoAt(playUrl, t); });
+        actions.appendChild(playBtn);
+        this.el.appendChild(actions);
+
+        this._addCloseBtn();
         this.el.classList.add('active');
     },
     openVideo(src) {
-        this.el.innerHTML = `
-            <video controls autoplay onclick="event.stopPropagation()">
-                <source src="${src}" type="video/mp4">
-                Your browser does not support the video tag.
-            </video>
-            <button class="lightbox-close">×</button>
-        `;
+        this._clear();
+        this.el.appendChild(this._createVideo(src));
+        this._addCloseBtn();
         this.el.classList.add('active');
     },
     openVideoAt(src, t) {
-        this.el.innerHTML = `
-            <video id="lb-video" controls autoplay onclick="event.stopPropagation()">
-                <source src="${src}" type="video/mp4">
-                Your browser does not support the video tag.
-            </video>
-            <button class="lightbox-close">×</button>
-        `;
+        this._clear();
+        const v = this._createVideo(src);
+        v.id = 'lb-video';
+        this.el.appendChild(v);
+        this._addCloseBtn();
         this.el.classList.add('active');
-        const v = document.getElementById('lb-video');
         v.addEventListener('loadedmetadata', () => { v.currentTime = t; });
     },
     close() {

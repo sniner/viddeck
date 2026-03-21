@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::RwLock;
+use parking_lot::RwLock;
 use serde::Serialize;
 use crate::ffmpeg::VideoMetadata;
 use std::collections::HashMap;
@@ -18,11 +18,8 @@ pub struct AppState {
     pub root: PathBuf,
     pub videos: RwLock<Vec<VideoEntry>>,
     pub scanning: RwLock<bool>,
-    // Map ID -> Path for quick lookup
     pub id_map: RwLock<HashMap<String, PathBuf>>,
-    // Broadcast channel for SSE
     pub tx: broadcast::Sender<()>,
-    // LRU Cache for thumbnails could stem from a separate Crate, or we handle it in Handler
 }
 
 impl AppState {
@@ -37,15 +34,15 @@ impl AppState {
     }
 
     pub fn add_entry(&self, entry: VideoEntry) {
-        let mut videos = self.videos.write().unwrap();
-        let mut map = self.id_map.write().unwrap();
-        
+        let mut videos = self.videos.write();
+        let mut map = self.id_map.write();
+
         map.insert(entry.id.clone(), entry.path.clone());
         videos.push(entry);
     }
 
     pub fn sort_entries(&self) {
-        let mut videos = self.videos.write().unwrap();
+        let mut videos = self.videos.write();
         videos.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     }
 

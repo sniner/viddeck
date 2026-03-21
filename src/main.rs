@@ -28,11 +28,12 @@ async fn main() -> anyhow::Result<()> {
     
     // Resolve absolute path
     let root = tokio::fs::canonicalize(&args.path).await
-        .map_err(|_| anyhow::anyhow!("Error: {:?} does not exist.", args.path))?;
+        .map_err(|_| anyhow::anyhow!("Error: {} does not exist.", args.path.display()))?;
 
-    println!("Scanning {:?} for videos...", root);
+    println!("Scanning {} for videos...", root.display());
 
     // Init State
+    // Initial receiver is unused; subscribers are created via tx.subscribe()
     let (tx, _rx) = tokio::sync::broadcast::channel(100);
     let state = Arc::new(AppState::new(root.clone(), tx));
     
@@ -62,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
     let addr_str = format!("{}:{}", args.host, args.port);
     let addr: SocketAddr = addr_str.parse()?;
     
-    println!("\nStarted VidDeck at http://{}", addr);
+    println!("\nStarted VidDeck at http://{addr}");
     println!("Loaded videos will appear automatically (refresh page).");
     println!("Press Ctrl+C to stop.");
 

@@ -64,7 +64,7 @@ struct FFProbeTags {
 
 pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
     let output = Command::new("ffprobe")
-        .args(&[
+        .args([
             "-v", "error",
             "-print_format", "json",
             "-show_entries", "format=duration,size,bit_rate",
@@ -79,13 +79,12 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
         .context("Failed to execute ffprobe")?;
 
     if !output.status.success() {
-        // It's okay if ffprobe fails for some files, just return error
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("ffprobe failed: {}", stderr);
+        anyhow::bail!("ffprobe failed: {stderr}");
     }
 
     let raw: FFProbeOutput = serde_json::from_slice(&output.stdout)?;
-    
+
     let fmt = raw.format.unwrap_or(FFProbeFormat { duration: "0".into(), size: "0".into() });
     let duration = fmt.duration.parse::<f64>().unwrap_or(0.0);
     let size = fmt.size.parse::<u64>().unwrap_or(0);
@@ -108,7 +107,6 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
         (0, 0, "0/0".to_string(), "unknown".to_string(), vec![])
     };
 
-    // Calculate float FPS
     let fps = if fps_str.contains('/') {
         let parts: Vec<&str> = fps_str.split('/').collect();
         if parts.len() == 2 {
@@ -122,7 +120,6 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
         fps_str.parse::<f64>().unwrap_or(0.0)
     };
 
-    // Process Chapters
     let mut chapters: Vec<Chapter> = Vec::new();
     if let Some(raw_chapters) = raw.chapters {
         for ch in raw_chapters {
@@ -133,7 +130,7 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
             } else {
                 String::new()
             };
-            
+
             chapters.push(Chapter {
                 start,
                 end: end.max(start),
@@ -142,13 +139,12 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
         }
     }
 
-    chapters.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap());
+    chapters.sort_by(|a, b| a.start.total_cmp(&b.start));
 
     if chapters.is_empty() && duration > 0.0 {
         chapters.push(Chapter { start: 0.0, end: duration, title: String::new() });
     }
 
-    // Adjust chapter ends to not overlap start of next
     for i in 0..chapters.len().saturating_sub(1) {
         if chapters[i].end <= chapters[i].start {
              let next_start = chapters[i+1].start;
@@ -168,54 +164,37 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
     })
 }
 
-pub async fn render_thumb(path: &Path, time: f64, width: u16) -> Result<Vec<u8>> {
+async fn run_ffmpeg_thumb(path: &Path, seek_time: Option<f64>, width: u16) -> Result<Vec<u8>> {
     let mut cmd = Command::new("ffmpeg");
-    cmd.args(&[
-        "-v", "error",
-        "-ss", &format!("{:.3}", time),
-        "-i"
-    ]);
-    cmd.arg(path);
-    
-    cmd.args(&["-frames:v", "1"]);
+    cmd.args(["-v", "error"]);
+    if let Some(t) = seek_time {
+        cmd.args(["-ss", &format!("{t:.3}")]);
+    }
+    cmd.arg("-i").arg(path);
+    cmd.args(["-frames:v", "1"]);
     if width > 0 {
-        cmd.args(&["-vf", &format!("scale={}:-2", width)]);
+        cmd.args(["-vf", &format!("scale={width}:-2")]);
     }
-    cmd.args(&[
-        "-f", "image2pipe",
-        "-vcodec", "mjpeg",
-        "pipe:1"
-    ]);
-    
-    let output = cmd.output().await?;
-    
-    if output.status.success() && !output.stdout.is_empty() {
-        return Ok(output.stdout);
-    }
-    
-    // Fallback to t=0 if it failed
-    if time > 0.0 {
-         let mut cmd = Command::new("ffmpeg");
-         cmd.args(&[
-            "-v", "error",
-            "-i"
-        ]);
-        cmd.arg(path);
-        
-        cmd.args(&["-frames:v", "1"]);
-        if width > 0 {
-            cmd.args(&["-vf", &format!("scale={}:-2", width)]);
-        }
-        cmd.args(&[
-            "-f", "image2pipe",
-            "-vcodec", "mjpeg",
-            "pipe:1"
-        ]);
-        let output = cmd.output().await?;
-        if output.status.success() && !output.stdout.is_empty() {
-            return Ok(output.stdout);
-        }
-    }
+    cmd.args(["-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]);
 
-    anyhow::bail!("Failed to generate thumbnail");
+    let output = cmd.output().await?;
+
+    if output.status.success() && !output.stdout.is_empty() {
+        Ok(output.stdout)
+    } else {
+        anyhow::bail!("ffmpeg produced no output")
+    }
+}
+
+pub async fn render_thumb(path: &Path, time: f64, width: u16) -> Result<Vec<u8>> {
+    if let Ok(data) = run_ffmpeg_thumb(path, Some(time), width).await {
+        return Ok(data);
+    }
+    // Fallback to t=0 if seeking failed
+    if time > 0.0
+        && let Ok(data) = run_ffmpeg_thumb(path, None, width).await
+    {
+        return Ok(data);
+    }
+    anyhow::bail!("Failed to generate thumbnail")
 }

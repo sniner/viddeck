@@ -5,14 +5,14 @@ use axum::{
     Form,
 };
 use std::convert::Infallible;
+use std::sync::{Arc, LazyLock};
 use futures_util::stream::Stream;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
-use std::sync::Arc;
 use serde::Deserialize;
 
 use tower_http::services::ServeFile;
-use tower::ServiceExt; 
+use tower::ServiceExt;
 
 use crate::state::AppState;
 use crate::assets::{STYLESHEET, JAVASCRIPT};
@@ -35,14 +35,13 @@ pub async fn index_handler(
     let mode = params.mode.unwrap_or_else(|| "percent".to_string());
     let offset = params.offset.unwrap_or(50.0);
     let width = params.width.unwrap_or(1280);
-    
-    // Check scanning status
-    let scanning = *state.scanning.read().unwrap();
-    let count = state.videos.read().unwrap().len();
+
+    let scanning = *state.scanning.read();
+    let count = state.videos.read().len();
     let root = state.root.to_string_lossy().to_string();
 
     let videos = {
-        let v = state.videos.read().unwrap();
+        let v = state.videos.read();
         v.clone()
     };
 
@@ -71,14 +70,13 @@ pub struct ThumbParams {
     pub width: Option<u32>,
 }
 
-use lazy_static::lazy_static;
 use moka::future::Cache;
 
-lazy_static! {
-    static ref THUMB_CACHE: Cache<String, Vec<u8>> = Cache::builder()
+static THUMB_CACHE: LazyLock<Cache<String, Vec<u8>>> = LazyLock::new(|| {
+    Cache::builder()
         .max_capacity(512)
-        .build();
-}
+        .build()
+});
 
 pub async fn thumb_handler(
     State(state): State<Arc<AppState>>,
@@ -88,16 +86,16 @@ pub async fn thumb_handler(
     let mode = params.mode.unwrap_or_else(|| "percent".to_string());
     let offset = params.offset.unwrap_or(50.0);
     let mut width = params.width.unwrap_or(1280);
-    
+
     // Parse idx from "0.jpg" -> 0
     let idx = idx_str.trim_end_matches(".jpg").parse::<usize>()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    
+
     // Clamp width
     if width > 1920 { width = 1920; }
     if width < 100 && width != 0 { width = 640; }
 
-    let cache_key = format!("{}-{}-{}-{}-{}", id, idx, mode, offset, width);
+    let cache_key = format!("{id}-{idx}-{mode}-{offset}-{width}");
 
     if let Some(data) = THUMB_CACHE.get(&cache_key).await {
         return Ok(([(header::CONTENT_TYPE, "image/jpeg")], data).into_response());
@@ -105,19 +103,19 @@ pub async fn thumb_handler(
 
     // Lookup path
     let path = {
-        let map = state.id_map.read().unwrap();
+        let map = state.id_map.read();
         map.get(&id).cloned()
     };
-    
+
     let path = path.ok_or(StatusCode::NOT_FOUND)?;
-    
+
     // Find chapter info
     let chapter = {
-        let videos = state.videos.read().unwrap();
+        let videos = state.videos.read();
         let entry = videos.iter().find(|v| v.id == id).ok_or(StatusCode::NOT_FOUND)?;
         entry.meta.chapters.get(idx).cloned()
     };
-    
+
     let chapter = chapter.ok_or(StatusCode::NOT_FOUND)?;
 
     // Calculate timestamp
@@ -131,12 +129,17 @@ pub async fn thumb_handler(
     let ts = ts.clamp(chapter.start, chapter.end);
 
     // Render
-    match render_thumb(&path, ts, width as u16).await {
+    #[allow(clippy::cast_possible_truncation)] // width is clamped to <= 1920
+    let width_u16 = width as u16;
+    match render_thumb(&path, ts, width_u16).await {
         Ok(data) => {
             THUMB_CACHE.insert(cache_key, data.clone()).await;
             Ok(([(header::CONTENT_TYPE, "image/jpeg")], data).into_response())
         }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(e) => {
+            eprintln!("[thumb] Failed to render thumbnail for {}: {e}", path.display());
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }
 
@@ -146,19 +149,22 @@ pub async fn video_handler(
     req: axum::extract::Request,
 ) -> Result<Response, StatusCode> {
     let path = {
-        let map = state.id_map.read().unwrap();
+        let map = state.id_map.read();
         map.get(&id).cloned()
     };
-    
+
     let path = path.ok_or(StatusCode::NOT_FOUND)?;
-    
+
     // ServeFile handles Range headers automatically
     let service = ServeFile::new(path);
     let result = service.oneshot(req).await;
-    
+
     match result {
         Ok(response) => Ok(response.into_response()),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(e) => {
+            eprintln!("[video] Failed to serve file: {e}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }
 
@@ -185,21 +191,23 @@ pub async fn api_open_dir_handler(
 
 fn open_path(state: &AppState, id: &str, dir: bool) -> Result<&'static str, StatusCode> {
     let path = {
-        let map = state.id_map.read().unwrap();
+        let map = state.id_map.read();
         map.get(id).cloned()
     };
-    
+
     if let Some(path) = path {
         let target = if dir {
             path.parent().unwrap_or(&path).to_path_buf()
         } else {
             path
         };
-        
-        // Use 'open' crate
+
         match open::that(target) {
-            Ok(_) => Ok("OK"),
-            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+            Ok(()) => Ok("OK"),
+            Err(e) => {
+                eprintln!("[open] Failed to open path: {e}");
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
+            }
         }
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -212,44 +220,56 @@ pub async fn api_rename_handler(
 ) -> Result<&'static str, (StatusCode, String)> {
     let id = params.get("id").ok_or((StatusCode::BAD_REQUEST, "Missing id".into()))?;
     let new_name = params.get("new_name").ok_or((StatusCode::BAD_REQUEST, "Missing new_name".into()))?;
-    
-    // Logic to rename
-    // 1. Get old path
+
+    // Get old path
     let old_path = {
-        let map = state.id_map.read().unwrap();
+        let map = state.id_map.read();
         map.get(id).cloned()
     };
-    
+
     let old_path = old_path.ok_or((StatusCode::NOT_FOUND, "File not found".into()))?;
-    
-    // Resolve new path (relative to root)
-    if new_name.contains("..") || new_name.starts_with("/") || new_name.starts_with("\\") {
+
+    // Validate new_name: reject obvious traversal attempts
+    if new_name.contains("..") || new_name.starts_with('/') || new_name.starts_with('\\') {
         return Err((StatusCode::BAD_REQUEST, "Invalid filename".into()));
     }
 
     let new_path = state.root.join(new_name);
-    
+
+    // Canonicalize parent to resolve symlinks and verify the path stays within root
+    let parent = new_path.parent()
+        .ok_or((StatusCode::BAD_REQUEST, "Invalid path".into()))?;
+
+    // Create parent dirs if needed (before canonicalize)
+    tokio::fs::create_dir_all(parent).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let canonical_parent = parent.canonicalize()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let canonical_root = state.root.canonicalize()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if !canonical_parent.starts_with(&canonical_root) {
+        return Err((StatusCode::BAD_REQUEST, "Path escapes root directory".into()));
+    }
+
     if new_path.exists() {
          return Err((StatusCode::CONFLICT, "File already exists".into()));
     }
-    
-    // Create parent dirs if needed
-    if let Some(parent) = new_path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
-    
-    tokio::fs::rename(&old_path, &new_path).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    
+
+    tokio::fs::rename(&old_path, &new_path).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let new_id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(new_path.to_string_lossy().as_bytes());
     let new_rel_path = new_path.strip_prefix(&state.root).unwrap_or(&new_path).to_path_buf();
 
     {
-        let mut videos = state.videos.write().unwrap();
-        let mut map = state.id_map.write().unwrap();
-        
+        let mut videos = state.videos.write();
+        let mut map = state.id_map.write();
+
         map.remove(id);
         map.insert(new_id.clone(), new_path.clone());
-        
+
         if let Some(entry) = videos.iter_mut().find(|v| v.id == *id) {
             entry.id = new_id;
             entry.path = new_path;
@@ -265,7 +285,6 @@ pub async fn sse_handler(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = state.tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(|res: Result<(), tokio_stream::wrappers::errors::BroadcastStreamRecvError>| {
-        // We ignore broadcast lag errors
         if res.is_ok() {
             Some(Ok(Event::default().data("refresh")))
         } else {
