@@ -17,7 +17,7 @@ use cli::Args;
 use state::AppState;
 use scanner::scan_library;
 use handlers::{
-    index_handler, style_handler, script_handler, thumb_handler, video_handler,
+    index_handler, style_handler, script_handler, thumb_handler, video_handler, transcode_handler,
     api_videos_handler, api_open_handler, api_open_dir_handler, api_rename_handler, sse_handler
 };
 
@@ -63,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/script.js", get(script_handler))
         .route("/thumb/:id/:idx", get(thumb_handler))
         .route("/video/:id", get(video_handler))
+        .route("/video/:id/transcode", get(transcode_handler))
         .route("/api/videos", get(api_videos_handler))
         .route("/api/open_file", post(api_open_handler))
         .route("/api/open_dir", post(api_open_dir_handler))

@@ -627,6 +627,25 @@ function thumbUrl(vidId, idx) {
     return `/thumb/${vidId}/${idx}.jpg?mode=${s.mode}&offset=${s.offset}&width=${s.width}`;
 }
 
+// --- Transcode helpers ---
+
+const BROWSER_COMPAT_VIDEO = ['H264', 'VP8', 'VP9', 'AV1'];
+
+function needsTranscode(vidId) {
+    const v = APP.videos[vidId];
+    if (!v) return false;
+    const badVideo = v.codec && !BROWSER_COMPAT_VIDEO.some(ok => v.codec.toUpperCase().includes(ok));
+    const badAudio = v.audio_codecs && v.audio_codecs.length > 0
+        && v.audio_codecs.some(c => !BROWSER_COMPAT_AUDIO.some(ok => c.includes(ok)));
+    return badVideo || badAudio;
+}
+function videoSrc(vidId) {
+    return needsTranscode(vidId) ? `/video/${vidId}/transcode` : `/video/${vidId}`;
+}
+function videoSrcAt(vidId, t) {
+    return needsTranscode(vidId) ? `/video/${vidId}/transcode?t=${Math.floor(t)}` : `/video/${vidId}`;
+}
+
 // --- Rendering ---
 
 function renderChips(video) {
@@ -657,7 +676,7 @@ function renderChapterItem(vidId, idx, chapter) {
         loading: 'lazy',
     });
     // Read img.src at click time so settings changes are reflected
-    img.addEventListener('click', () => lb.openChapter(img.src, `/video/${vidId}`, chapter.start));
+    img.addEventListener('click', () => lb.openChapter(img.src, vidId, chapter.start));
     item.appendChild(img);
 
     const overlay = el('div', { className: 'chapter-overlay' });
@@ -691,10 +710,10 @@ function renderCard(id, video, tabIdx) {
 
     const actions = el('div', { className: 'video-actions' });
     if (APP.remote) {
-        actions.appendChild(el('button', { className: 'btn-icon', onClick: () => lb.openVideo(`/video/${id}`), title: 'Play' }, '\u25b6\ufe0f'));
+        actions.appendChild(el('button', { className: 'btn-icon', onClick: () => lb.openVideo(videoSrc(id)), title: 'Play' }, '\u25b6\ufe0f'));
     } else {
         actions.appendChild(el('button', { className: 'btn-icon', onClick: () => apiCall('open_file', id), title: 'Open in system player' }, '\u25b6\ufe0f System'));
-        actions.appendChild(el('button', { className: 'btn-icon', onClick: () => lb.openVideo(`/video/${id}`), title: 'Play in browser' }, '\ud83c\udf10 Browser'));
+        actions.appendChild(el('button', { className: 'btn-icon', onClick: () => lb.openVideo(videoSrc(id)), title: 'Play in browser' }, '\ud83c\udf10 Browser'));
         actions.appendChild(el('button', { className: 'btn-icon', onClick: () => apiCall('open_dir', id), title: 'Open directory' }, '\ud83d\udcc2 Folder'));
     }
     header.appendChild(actions);
@@ -977,7 +996,7 @@ const lb = {
         this._addCloseBtn();
         this.el.classList.add('active');
     },
-    openChapter(imgSrc, playUrl, startSec) {
+    openChapter(imgSrc, vidId, startSec) {
         const t = Math.floor(startSec);
         this._clear();
         const img = document.createElement('img');
@@ -991,7 +1010,8 @@ const lb = {
         playBtn.className = 'lightbox-btn';
         playBtn.title = 'Im Browser abspielen';
         playBtn.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="white"><path d="M8 5v14l11-7z"/></svg>';
-        playBtn.addEventListener('click', (e) => { e.stopPropagation(); lb.openVideoAt(playUrl, t); });
+        const playSrc = videoSrcAt(vidId, startSec);
+        playBtn.addEventListener('click', (e) => { e.stopPropagation(); lb.openVideoAt(playSrc, t); });
         actions.appendChild(playBtn);
         this.el.appendChild(actions);
 
@@ -1010,7 +1030,10 @@ const lb = {
         this.el.appendChild(v);
         this._addCloseBtn();
         this.el.classList.add('active');
-        v.addEventListener('loadedmetadata', () => { v.currentTime = t; });
+        // Only seek client-side for direct file URLs (not transcoded streams)
+        if (!src.includes('/transcode')) {
+            v.addEventListener('loadedmetadata', () => { v.currentTime = t; });
+        }
     },
     close() {
         this.el.classList.remove('active');

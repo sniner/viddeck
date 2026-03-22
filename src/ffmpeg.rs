@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::OnceLock;
 use tokio::process::Command;
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, Context};
@@ -184,6 +185,120 @@ async fn run_ffmpeg_thumb(path: &Path, seek_time: Option<f64>, width: u16) -> Re
     } else {
         anyhow::bail!("ffmpeg produced no output")
     }
+}
+
+/// Hardware-accelerated H.264 encoder, detected once at first use.
+#[derive(Debug, Clone)]
+enum HwEncoder {
+    /// macOS — no special init args needed
+    VideoToolbox,
+    /// Linux (AMD/Intel) — needs `-vaapi_device` before input
+    Vaapi,
+    /// Windows AMD
+    Amf,
+    /// NVIDIA (all platforms)
+    Nvenc,
+    /// Intel `QuickSync`
+    Qsv,
+    /// Software fallback
+    Libx264,
+}
+
+fn detect_hw_encoder() -> HwEncoder {
+    // Run ffmpeg -encoders synchronously (called once, cached via OnceLock)
+    let Ok(output) = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-encoders"])
+        .output()
+    else {
+        return HwEncoder::Libx264;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+
+    // Priority order: platform-native first, then cross-platform, then software
+    let candidates: &[(&str, HwEncoder)] = &[
+        ("h264_videotoolbox", HwEncoder::VideoToolbox),
+        ("h264_vaapi", HwEncoder::Vaapi),
+        ("h264_amf", HwEncoder::Amf),
+        ("h264_nvenc", HwEncoder::Nvenc),
+        ("h264_qsv", HwEncoder::Qsv),
+    ];
+
+    for (name, variant) in candidates {
+        if text.contains(name) {
+            // VAAPI additionally requires the render device
+            if matches!(variant, HwEncoder::Vaapi) && !Path::new("/dev/dri/renderD128").exists() {
+                continue;
+            }
+            eprintln!("[transcode] Using hardware encoder: {name}");
+            return variant.clone();
+        }
+    }
+
+    eprintln!("[transcode] No hardware encoder found, using libx264");
+    HwEncoder::Libx264
+}
+
+fn hw_encoder() -> &'static HwEncoder {
+    static ENCODER: OnceLock<HwEncoder> = OnceLock::new();
+    ENCODER.get_or_init(detect_hw_encoder)
+}
+
+pub async fn transcode_video(path: &Path, start_time: f64, transcode_video_stream: bool) -> Result<tokio::process::Child> {
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-v", "error"]);
+
+    let encoder = hw_encoder();
+
+    // Pre-input args for hardware device init
+    if transcode_video_stream
+        && let HwEncoder::Vaapi = encoder
+    {
+        cmd.args(["-vaapi_device", "/dev/dri/renderD128"]);
+    }
+    if start_time > 0.0 {
+        cmd.args(["-ss", &format!("{start_time:.3}")]);
+    }
+    cmd.arg("-i").arg(path);
+    if transcode_video_stream {
+        match encoder {
+            HwEncoder::Vaapi => {
+                cmd.args(["-vf", "format=nv12,hwupload"]);
+                cmd.args(["-c:v", "h264_vaapi", "-qp", "24"]);
+            }
+            HwEncoder::VideoToolbox => {
+                cmd.args(["-c:v", "h264_videotoolbox", "-q:v", "65"]);
+            }
+            HwEncoder::Amf => {
+                cmd.args(["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "24", "-qp_p", "24"]);
+            }
+            HwEncoder::Nvenc => {
+                cmd.args(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "24"]);
+            }
+            HwEncoder::Qsv => {
+                cmd.args(["-c:v", "h264_qsv", "-preset", "fast", "-global_quality", "24"]);
+            }
+            HwEncoder::Libx264 => {
+                cmd.args(["-c:v", "libx264", "-preset", "fast", "-crf", "22"]);
+            }
+        }
+    } else {
+        cmd.args(["-c:v", "copy"]);
+    }
+    cmd.args([
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-af", "aresample=async=1",
+        "-avoid_negative_ts", "make_zero",
+        "-f", "mp4",
+        "-movflags", "frag_keyframe+empty_moov",
+        "pipe:1",
+    ]);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    cmd.stdin(Stdio::null());
+
+    let child = cmd.spawn().context("Failed to spawn ffmpeg for transcoding")?;
+    Ok(child)
 }
 
 pub async fn render_thumb(path: &Path, time: f64, width: u16) -> Result<Vec<u8>> {

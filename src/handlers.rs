@@ -16,10 +16,14 @@ use serde::{Deserialize, Serialize};
 use tower_http::services::ServeFile;
 use tower::ServiceExt;
 
+use tokio::sync::Semaphore;
+use tokio_util::io::ReaderStream;
+use axum::body::Body;
+
 use crate::state::AppState;
 use crate::assets::{STYLESHEET, JAVASCRIPT};
 use crate::html::generate_shell_html;
-use crate::ffmpeg::render_thumb;
+use crate::ffmpeg::{render_thumb, transcode_video};
 use base64::Engine;
 
 // --- Index (HTML shell) ---
@@ -209,6 +213,74 @@ pub async fn video_handler(
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
+}
+
+// --- Video transcoding ---
+
+#[derive(Deserialize)]
+pub struct TranscodeParams {
+    pub t: Option<f64>,
+}
+
+static TRANSCODE_SEM: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
+
+const BROWSER_COMPAT_VIDEO: &[&str] = &["h264", "vp8", "vp9", "av1"];
+
+pub async fn transcode_handler(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(params): Query<TranscodeParams>,
+) -> Result<Response, StatusCode> {
+    let (path, video_codec) = {
+        let videos = state.videos.read();
+        let entry = videos.get(&id).ok_or(StatusCode::NOT_FOUND)?;
+        (entry.path.clone(), entry.meta.codec.clone())
+    };
+
+    let _permit = TRANSCODE_SEM.acquire().await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let transcode_video_stream = !BROWSER_COMPAT_VIDEO.iter()
+        .any(|ok| video_codec.eq_ignore_ascii_case(ok));
+
+    let start_time = params.t.unwrap_or(0.0);
+    let mut child = transcode_video(&path, start_time, transcode_video_stream).await
+        .map_err(|e| {
+            eprintln!("[transcode] Failed to start ffmpeg: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let stdout = child.stdout.take().ok_or_else(|| {
+        eprintln!("[transcode] No stdout from ffmpeg");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // Spawn a task to wait for the child and log errors
+    tokio::spawn(async move {
+        match child.wait().await {
+            Ok(status) if !status.success() => {
+                if let Some(mut stderr) = child.stderr.take() {
+                    use tokio::io::AsyncReadExt;
+                    let mut buf = Vec::new();
+                    let _ = stderr.read_to_end(&mut buf).await;
+                    let msg = String::from_utf8_lossy(&buf);
+                    if !msg.is_empty() {
+                        eprintln!("[transcode] ffmpeg stderr: {msg}");
+                    }
+                }
+            }
+            Err(e) => eprintln!("[transcode] Failed to wait for ffmpeg: {e}"),
+            _ => {}
+        }
+    });
+
+    let stream = ReaderStream::new(stdout);
+    let body = Body::from_stream(stream);
+
+    Ok(Response::builder()
+        .header(header::CONTENT_TYPE, "video/mp4")
+        .body(body)
+        .unwrap()
+        .into_response())
 }
 
 // --- API: open file / open directory ---
