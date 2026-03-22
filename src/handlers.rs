@@ -224,26 +224,22 @@ pub struct TranscodeParams {
 
 static TRANSCODE_SEM: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
 
-const BROWSER_COMPAT_VIDEO: &[&str] = &["h264", "vp8", "vp9", "av1"];
-
 pub async fn transcode_handler(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Query(params): Query<TranscodeParams>,
 ) -> Result<Response, StatusCode> {
-    let (path, video_codec) = {
+    let path = {
         let videos = state.videos.read();
         let entry = videos.get(&id).ok_or(StatusCode::NOT_FOUND)?;
-        (entry.path.clone(), entry.meta.codec.clone())
+        entry.path.clone()
     };
 
     let _permit = TRANSCODE_SEM.acquire().await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let transcode_video_stream = !BROWSER_COMPAT_VIDEO.iter()
-        .any(|ok| video_codec.eq_ignore_ascii_case(ok));
 
     let start_time = params.t.unwrap_or(0.0);
-    let mut child = transcode_video(&path, start_time, transcode_video_stream).await
+    let mut child = transcode_video(&path, start_time).await
         .map_err(|e| {
             eprintln!("[transcode] Failed to start ffmpeg: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
@@ -263,7 +259,7 @@ pub async fn transcode_handler(
                     let mut buf = Vec::new();
                     let _ = stderr.read_to_end(&mut buf).await;
                     let msg = String::from_utf8_lossy(&buf);
-                    if !msg.is_empty() {
+                    if !msg.is_empty() && !msg.contains("Broken pipe") {
                         eprintln!("[transcode] ffmpeg stderr: {msg}");
                     }
                 }

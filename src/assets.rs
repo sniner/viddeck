@@ -648,7 +648,7 @@ function videoSrcAt(vidId, t) {
 
 // --- Rendering ---
 
-function renderChips(video) {
+function renderChips(id, video) {
     const frag = document.createDocumentFragment();
     const chip = text => { const s = el('span', null, text); frag.appendChild(s); };
 
@@ -658,10 +658,9 @@ function renderChips(video) {
     if (video.fps > 0) chip(`\ud83c\udf9e\ufe0f ${video.fps.toFixed(2)} fps`);
     if (video.codec) chip(`\u2699\ufe0f ${video.codec}`);
     if (video.audio_codecs && video.audio_codecs.length > 0) {
-        const incompatible = video.audio_codecs.some(c => !BROWSER_COMPAT_AUDIO.some(ok => c.includes(ok)));
-        const icon = incompatible ? '\ud83d\udd07' : '\ud83d\udd0a';
-        chip(`${icon} ${video.audio_codecs.join(', ')}`);
+        chip(`\ud83d\udd0a ${video.audio_codecs.join(', ')}`);
     }
+    if (needsTranscode(id)) chip('\ud83d\udd04 Transcode');
     return frag;
 }
 
@@ -704,7 +703,7 @@ function renderCard(id, video, tabIdx) {
     info.appendChild(titleDiv);
 
     const meta = el('div', { className: 'video-meta' });
-    meta.appendChild(renderChips(video));
+    meta.appendChild(renderChips(id, video));
     info.appendChild(meta);
     header.appendChild(info);
 

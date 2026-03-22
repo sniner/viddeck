@@ -243,46 +243,40 @@ fn hw_encoder() -> &'static HwEncoder {
     ENCODER.get_or_init(detect_hw_encoder)
 }
 
-pub async fn transcode_video(path: &Path, start_time: f64, transcode_video_stream: bool) -> Result<tokio::process::Child> {
+pub async fn transcode_video(path: &Path, start_time: f64) -> Result<tokio::process::Child> {
     let mut cmd = Command::new("ffmpeg");
     cmd.args(["-v", "error"]);
 
     let encoder = hw_encoder();
 
     // Pre-input args for hardware device init
-    if transcode_video_stream
-        && let HwEncoder::Vaapi = encoder
-    {
+    if let HwEncoder::Vaapi = encoder {
         cmd.args(["-vaapi_device", "/dev/dri/renderD128"]);
     }
     if start_time > 0.0 {
         cmd.args(["-ss", &format!("{start_time:.3}")]);
     }
     cmd.arg("-i").arg(path);
-    if transcode_video_stream {
-        match encoder {
-            HwEncoder::Vaapi => {
-                cmd.args(["-vf", "format=nv12,hwupload"]);
-                cmd.args(["-c:v", "h264_vaapi", "-qp", "24"]);
-            }
-            HwEncoder::VideoToolbox => {
-                cmd.args(["-c:v", "h264_videotoolbox", "-q:v", "65"]);
-            }
-            HwEncoder::Amf => {
-                cmd.args(["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "24", "-qp_p", "24"]);
-            }
-            HwEncoder::Nvenc => {
-                cmd.args(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "24"]);
-            }
-            HwEncoder::Qsv => {
-                cmd.args(["-c:v", "h264_qsv", "-preset", "fast", "-global_quality", "24"]);
-            }
-            HwEncoder::Libx264 => {
-                cmd.args(["-c:v", "libx264", "-preset", "fast", "-crf", "22"]);
-            }
+    match encoder {
+        HwEncoder::Vaapi => {
+            cmd.args(["-vf", "format=nv12,hwupload"]);
+            cmd.args(["-c:v", "h264_vaapi", "-qp", "24"]);
         }
-    } else {
-        cmd.args(["-c:v", "copy"]);
+        HwEncoder::VideoToolbox => {
+            cmd.args(["-c:v", "h264_videotoolbox", "-q:v", "65"]);
+        }
+        HwEncoder::Amf => {
+            cmd.args(["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "24", "-qp_p", "24"]);
+        }
+        HwEncoder::Nvenc => {
+            cmd.args(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "24"]);
+        }
+        HwEncoder::Qsv => {
+            cmd.args(["-c:v", "h264_qsv", "-preset", "fast", "-global_quality", "24"]);
+        }
+        HwEncoder::Libx264 => {
+            cmd.args(["-c:v", "libx264", "-preset", "fast", "-crf", "22"]);
+        }
     }
     cmd.args([
         "-c:a", "aac",
