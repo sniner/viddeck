@@ -19,4 +19,8 @@ pub struct Args {
     /// Watch for filesystem changes
     #[arg(short, long)]
     pub watch: bool,
+
+    /// Remote mode: disable system open commands (no local player/folder buttons)
+    #[arg(long)]
+    pub remote: bool,
 }

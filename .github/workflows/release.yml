@@ -22,10 +22,6 @@ jobs:
           - os: windows-latest
             artifact_name: viddeck.exe
             asset_name: viddeck-windows-amd64.exe
-          - os: macos-latest
-            artifact_name: viddeck
-            asset_name: viddeck-macos-amd64
-
     steps:
       - uses: actions/checkout@v4
 
@@ -46,9 +42,39 @@ jobs:
           name: ${{ matrix.asset_name }}
           path: target/release/${{ matrix.asset_name }}
 
+  build-macos:
+    name: Build macOS Universal Binary
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with both targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build aarch64
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Build x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Create Universal Binary
+        run: |
+          lipo -create \
+            target/aarch64-apple-darwin/release/viddeck \
+            target/x86_64-apple-darwin/release/viddeck \
+            -output viddeck-macos-universal
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: viddeck-macos-universal
+          path: viddeck-macos-universal
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, build-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Download all workflow run artifacts

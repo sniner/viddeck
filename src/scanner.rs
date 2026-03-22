@@ -28,7 +28,7 @@ pub async fn process_single_video(path: &Path, root: &Path, state: &Arc<AppState
 
     {
         let videos = state.videos.read();
-        if let Some(existing) = videos.iter().find(|v| v.id == id)
+        if let Some(existing) = videos.get(&id)
             && existing.modified == current_modified
             && current_modified.is_some()
         {
@@ -45,22 +45,14 @@ pub async fn process_single_video(path: &Path, root: &Path, state: &Arc<AppState
     {
         let rel_path = path.strip_prefix(root).unwrap_or(path).to_path_buf();
 
-        {
-            let mut id_map = state.id_map.write();
-            if id_map.remove(&id).is_some() {
-                let mut videos = state.videos.write();
-                videos.retain(|v| v.id != id);
-            }
-        }
-
         let entry = VideoEntry {
-            id,
+            id: id.clone(),
             path: path.to_path_buf(),
             rel_path,
             meta,
             modified: current_modified,
         };
-        state.add_entry(entry);
+        state.videos.write().insert(id, entry);
         return true;
     }
     false
@@ -98,7 +90,6 @@ pub async fn scan_library(state: Arc<AppState>) {
 
     while join_set.join_next().await.is_some() {}
 
-    state.sort_entries();
     *state.scanning.write() = false;
     state.notify_refresh();
 }
@@ -180,9 +171,9 @@ async fn run_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
         let mut to_remove: Vec<String> = Vec::new();
         for path in &pending {
             if !path.exists() {
-                let id_map = state.id_map.read();
-                for (vid_id, vid_path) in id_map.iter() {
-                    if vid_path.starts_with(path) {
+                let videos = state.videos.read();
+                for (vid_id, entry) in videos.iter() {
+                    if entry.path.starts_with(path) {
                         to_remove.push(vid_id.clone());
                     }
                 }
@@ -190,11 +181,9 @@ async fn run_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
         }
         let had_deletions = !to_remove.is_empty();
         if had_deletions {
-            let mut id_map = state.id_map.write();
             let mut videos = state.videos.write();
             for rid in &to_remove {
-                id_map.remove(rid);
-                videos.retain(|v| &v.id != rid);
+                videos.remove(rid);
             }
         }
 
@@ -239,7 +228,6 @@ async fn run_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
         }
 
         if any_changed {
-            state.sort_entries();
             state.notify_refresh();
         }
     }

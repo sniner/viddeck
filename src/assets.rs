@@ -53,7 +53,7 @@ header {
     border: 1px solid var(--border);
     box-shadow: var(--shadow-md);
     display: flex;
-    flex-wrap: wrap; 
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
     gap: 20px;
@@ -318,7 +318,7 @@ button.primary:hover { background: var(--primary-hover); }
     max-height: 85vh;
     border-radius: 8px;
     box-shadow: 0 0 50px rgba(0,0,0,0.5);
-    cursor: pointer; 
+    cursor: pointer;
 }
 .lightbox-close {
     position: absolute;
@@ -400,15 +400,150 @@ button.primary:hover { background: var(--primary-hover); }
     border-color: var(--primary);
 }
 
+/* Scanning spinner */
+.scanning-screen {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 60vh;
+}
+.scanning-content {
+    text-align: center;
+}
+.loader {
+    border: 4px solid var(--border);
+    border-top: 4px solid var(--primary);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 20px;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
 "#;
 
 pub const JAVASCRIPT: &str = r#"
+'use strict';
+
+const PAGE_SIZE = 50;
+const CONFIG_KEY = 'viddeck_config';
+const BROWSER_COMPAT_AUDIO = ['AAC', 'MP3', 'OPUS', 'VORBIS', 'FLAC', 'PCM', 'MP2'];
+
+const APP = {
+    videos: {},
+    root: '',
+    scanning: false,
+    remote: false,
+    settings: { mode: 'percent', offset: 50, width: 1280 },
+    searchTerm: '',
+    activeTab: 0,
+};
+
+// --- Utilities ---
+
+function humanTs(sec) {
+    const total = Math.max(0, sec);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = Math.floor(total % 60);
+    const pad = n => String(n).padStart(2, '0');
+    return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+function humanSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    let size = bytes;
+    for (const unit of units) {
+        if (size < 1024) return `${size.toFixed(1)} ${unit}`;
+        size /= 1024;
+    }
+    return `${size.toFixed(1)} EB`;
+}
+
+function el(tag, attrs, ...children) {
+    const e = document.createElement(tag);
+    if (attrs) {
+        for (const [k, v] of Object.entries(attrs)) {
+            if (k === 'className') e.className = v;
+            else if (k.startsWith('on')) e.addEventListener(k.slice(2).toLowerCase(), v);
+            else if (k === 'style' && typeof v === 'object') Object.assign(e.style, v);
+            else e.setAttribute(k, v);
+        }
+    }
+    for (const c of children) {
+        if (c == null) continue;
+        e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    }
+    return e;
+}
+
+// --- Settings ---
+
+function loadSettings() {
+    try {
+        const stored = JSON.parse(localStorage.getItem(CONFIG_KEY));
+        if (stored) {
+            if (stored.mode) APP.settings.mode = stored.mode;
+            if (stored.offset != null) APP.settings.offset = Number(stored.offset);
+            if (stored.width != null) APP.settings.width = Number(stored.width);
+        }
+    } catch(e) { /* ignore */ }
+}
+
+function saveSettings() {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(APP.settings));
+}
+
+// --- API ---
+
+let fetchTimer = null;
+let fetchInFlight = false;
+
+function scheduleFetch(delayMs) {
+    if (fetchTimer) clearTimeout(fetchTimer);
+    fetchTimer = setTimeout(fetchVideos, delayMs);
+}
+
+async function fetchVideos() {
+    if (fetchTimer) { clearTimeout(fetchTimer); fetchTimer = null; }
+    if (fetchInFlight) return;
+    fetchInFlight = true;
+    try {
+        const res = await fetch('/api/videos');
+        const data = await res.json();
+        const wasScanning = APP.scanning;
+        APP.videos = data.videos;
+        APP.root = data.root;
+        APP.scanning = data.scanning;
+        APP.remote = data.remote;
+
+        if (wasScanning && !APP.scanning) {
+            // Scan just finished — full render with final sorted list
+            render();
+        } else if (APP.scanning && document.getElementById('cards-container')) {
+            // Still scanning but already showing content — just update header count
+            updateScanProgress();
+            scheduleFetch(2000);
+        } else {
+            // First render, or non-scanning refresh (SSE from watcher, rename, etc.)
+            render();
+        }
+    } catch(e) {
+        console.error('Failed to fetch videos:', e);
+    } finally {
+        fetchInFlight = false;
+    }
+}
+
 async function apiCall(endpoint, id) {
     try {
-        const res = await fetch(`/api/${endpoint}?id=${id}`, { method: 'POST' });
-        if (res.ok) {
-            console.log(`${endpoint} success`);
-        } else {
+        const res = await fetch(`/api/${endpoint}?id=${encodeURIComponent(id)}`, { method: 'POST' });
+        if (!res.ok) {
             alert(`Command failed: ${await res.text()}`);
         }
     } catch (e) {
@@ -416,51 +551,10 @@ async function apiCall(endpoint, id) {
     }
 }
 
-function openFile(id) { apiCall('open_file', id); }
-function openDir(id) { apiCall('open_dir', id); }
-
-const renameState = {};
-
-function startRename(id) {
-    const container = document.getElementById(`title-${id}`);
-    if (!container || renameState[id]) return;
-
-    // Save current content
-    renameState[id] = container.innerHTML;
-    
-    // Get current text content
-    const currentName = container.querySelector('.title-text').textContent;
-
-    container.innerHTML = `
-        <div class="rename-form" onclick="event.stopPropagation()">
-            <input type="text" class="rename-input" id="input-${id}" value="${currentName}">
-            <button class="btn-icon-raw" onclick="submitRename('${id}')" title="Save">✅</button>
-            <button class="btn-icon-raw" onclick="cancelRename('${id}')" title="Cancel">❌</button>
-        </div>
-    `;
-    
-    const input = document.getElementById(`input-${id}`);
-    input.focus();
-    input.select();
-    
-    input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') submitRename(id);
-        if (e.key === 'Escape') cancelRename(id);
-    });
-}
-
-function cancelRename(id) {
-    const container = document.getElementById(`title-${id}`);
-    if (container && renameState[id]) {
-        container.innerHTML = renameState[id];
-        delete renameState[id];
-    }
-}
-
 async function submitRename(id) {
     const input = document.getElementById(`input-${id}`);
     if (!input) return;
-    
+
     const newName = input.value.trim();
     if (!newName) return;
 
@@ -468,13 +562,21 @@ async function submitRename(id) {
         const formData = new URLSearchParams();
         formData.append('id', id);
         formData.append('new_name', newName);
-        const res = await fetch('/api/rename', { 
+        const res = await fetch('/api/rename', {
             method: 'POST',
             body: formData
         });
-        
+
         if (res.ok) {
-            window.location.reload();
+            const result = await res.json();
+            // Update local state
+            const entry = APP.videos[result.old_id];
+            if (entry) {
+                delete APP.videos[result.old_id];
+                entry.rel_path = result.rel_path;
+                APP.videos[result.new_id] = entry;
+            }
+            render();
         } else {
             alert(`Rename failed: ${await res.text()}`);
         }
@@ -483,170 +585,357 @@ async function submitRename(id) {
     }
 }
 
-// Persistent Settings
-const CONFIG_KEY = 'viddeck_config';
+// --- Rename UI ---
 
-function initSettings() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const hasParams = urlParams.has('mode') || urlParams.has('offset') || urlParams.has('width');
-    
-    if (hasParams) {
-        // Save current state
-        const settings = {
-            mode: urlParams.get('mode'),
-            offset: urlParams.get('offset'),
-            width: urlParams.get('width')
-        };
-        localStorage.setItem(CONFIG_KEY, JSON.stringify(settings));
-    } else {
-        // Restore state if clean load
-        try {
-            const stored = JSON.parse(localStorage.getItem(CONFIG_KEY));
-            if (stored) {
-                const newUrl = new URL(window.location);
-                if (stored.mode) newUrl.searchParams.set('mode', stored.mode);
-                if (stored.offset) newUrl.searchParams.set('offset', stored.offset);
-                if (stored.width) newUrl.searchParams.set('width', stored.width);
-                window.location.replace(newUrl);
-            }
-        } catch(e) {}
-    }
-}
+const renameState = {};
 
-// Tab Pagination
-const TAB_PAGE_SIZE = 50;
+function startRename(id) {
+    const container = document.getElementById(`title-${id}`);
+    if (!container || renameState[id]) return;
 
-function initTabs() {
-    const tabBar = document.querySelector('.tab-bar');
-    if (!tabBar) return;
+    renameState[id] = true;
+    const currentName = container.querySelector('.title-text').textContent;
 
-    const allCards = Array.from(document.querySelectorAll('.video-card'));
-    const originalHTML = tabBar.innerHTML;
-    const originalTabCount = tabBar.querySelectorAll('.tab-btn').length;
+    container.textContent = '';
+    const form = el('div', { className: 'rename-form', onClick: e => e.stopPropagation() });
+    const input = el('input', { type: 'text', className: 'rename-input', id: `input-${id}`, value: currentName });
+    const saveBtn = el('button', { className: 'btn-icon-raw', title: 'Save', onClick: () => submitRename(id) }, '\u2705');
+    const cancelBtn = el('button', { className: 'btn-icon-raw', title: 'Cancel', onClick: () => cancelRename(id) }, '\u274c');
 
-    let activeTab = parseInt(sessionStorage.getItem('viddeck_tab') || '0');
-    if (activeTab >= originalTabCount) activeTab = 0;
-
-    let searchMatches = null; // null = normal mode, Array = search mode
-
-    function setActiveButton(n) {
-        tabBar.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.classList.toggle('active', parseInt(btn.dataset.tab) === n);
-        });
-    }
-
-    function showNormalTab(n) {
-        activeTab = n;
-        sessionStorage.setItem('viddeck_tab', n);
-        allCards.forEach(card => {
-            card.style.display = parseInt(card.dataset.tab) === n ? '' : 'none';
-        });
-        setActiveButton(n);
-    }
-
-    function showSearchPage(n) {
-        const start = n * TAB_PAGE_SIZE;
-        allCards.forEach(card => card.style.display = 'none');
-        searchMatches.slice(start, start + TAB_PAGE_SIZE).forEach(card => card.style.display = '');
-        setActiveButton(n);
-    }
-
-    function buildSearchTabs(count, page) {
-        const pageCount = Math.ceil(count / TAB_PAGE_SIZE);
-        tabBar.innerHTML = '';
-        for (let t = 0; t < pageCount; t++) {
-            const start = t * TAB_PAGE_SIZE + 1;
-            const end = Math.min((t + 1) * TAB_PAGE_SIZE, count);
-            const btn = document.createElement('button');
-            btn.className = 'tab-btn' + (t === page ? ' active' : '');
-            btn.dataset.tab = t;
-            btn.textContent = `${start}\u2013${end}`;
-            tabBar.appendChild(btn);
-        }
-    }
-
-    tabBar.addEventListener('click', e => {
-        const btn = e.target.closest('.tab-btn');
-        if (!btn) return;
-        const n = parseInt(btn.dataset.tab);
-        if (searchMatches !== null) {
-            showSearchPage(n);
-        } else {
-            showNormalTab(n);
-        }
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') submitRename(id);
+        if (e.key === 'Escape') cancelRename(id);
     });
 
-    showNormalTab(activeTab);
-
-    window._tabEnterSearch = function(matches) {
-        searchMatches = matches;
-        if (matches.length === 0) {
-            tabBar.style.display = 'none';
-            allCards.forEach(card => card.style.display = 'none');
-        } else {
-            tabBar.style.display = '';
-            buildSearchTabs(matches.length, 0);
-            showSearchPage(0);
-        }
-    };
-
-    window._tabExitSearch = function() {
-        searchMatches = null;
-        tabBar.style.display = '';
-        tabBar.innerHTML = originalHTML;
-        showNormalTab(activeTab);
-    };
+    form.appendChild(input);
+    form.appendChild(saveBtn);
+    form.appendChild(cancelBtn);
+    container.appendChild(form);
+    input.focus();
+    input.select();
 }
 
-// Live Search
-function initSearch() {
-    const searchInput = document.getElementById('search-input');
-    if (!searchInput) return;
+function cancelRename(id) {
+    delete renameState[id];
+    render();
+}
 
-    const allCards = Array.from(document.querySelectorAll('.video-card'));
+// --- Thumbnail URL ---
 
-    function performSearch(term) {
-        const lowerTerm = term.toLowerCase().trim();
-        const noResults = document.getElementById('no-results');
+function thumbUrl(vidId, idx) {
+    const s = APP.settings;
+    return `/thumb/${vidId}/${idx}.jpg?mode=${s.mode}&offset=${s.offset}&width=${s.width}`;
+}
 
-        if (lowerTerm) {
-            const matches = allCards.filter(card => {
-                const title = card.querySelector('.video-title').textContent.toLowerCase();
-                const relPath = card.getAttribute('data-path') || '';
-                return title.includes(lowerTerm) || relPath.includes(lowerTerm);
-            });
+// --- Rendering ---
 
-            if (window._tabEnterSearch) {
-                window._tabEnterSearch(matches);
-            } else {
-                allCards.forEach(card => card.style.display = 'none');
-                matches.forEach(card => card.style.display = '');
-            }
+function renderChips(video) {
+    const frag = document.createDocumentFragment();
+    const chip = text => { const s = el('span', null, text); frag.appendChild(s); };
 
-            if (noResults) noResults.style.display = matches.length === 0 ? 'block' : 'none';
-        } else {
-            if (window._tabExitSearch) {
-                window._tabExitSearch();
-            } else {
-                allCards.forEach(card => card.style.display = '');
-            }
-            if (noResults) noResults.style.display = 'none';
+    chip(`\u23f1\ufe0f ${humanTs(video.duration)}`);
+    chip(`\ud83d\udcbe ${humanSize(video.size)}`);
+    if (video.width > 0) chip(`\ud83d\udcd0 ${video.width}x${video.height}`);
+    if (video.fps > 0) chip(`\ud83c\udf9e\ufe0f ${video.fps.toFixed(2)} fps`);
+    if (video.codec) chip(`\u2699\ufe0f ${video.codec}`);
+    if (video.audio_codecs && video.audio_codecs.length > 0) {
+        const incompatible = video.audio_codecs.some(c => !BROWSER_COMPAT_AUDIO.some(ok => c.includes(ok)));
+        const icon = incompatible ? '\ud83d\udd07' : '\ud83d\udd0a';
+        chip(`${icon} ${video.audio_codecs.join(', ')}`);
+    }
+    return frag;
+}
+
+function renderChapterItem(vidId, idx, chapter) {
+    const dur = humanTs(chapter.end - chapter.start);
+    const title = chapter.title || `Chapter ${idx + 1}`;
+
+    const item = el('div', { className: 'chapter-item' });
+    const img = el('img', {
+        className: 'chapter-thumb',
+        src: thumbUrl(vidId, idx),
+        loading: 'lazy',
+    });
+    // Read img.src at click time so settings changes are reflected
+    img.addEventListener('click', () => lb.openChapter(img.src, `/video/${vidId}`, chapter.start));
+    item.appendChild(img);
+
+    const overlay = el('div', { className: 'chapter-overlay' });
+    overlay.appendChild(el('div', { className: 'chapter-time' }, dur));
+    const titleEl = el('div', { className: 'chapter-title', title: title });
+    titleEl.textContent = title;
+    overlay.appendChild(titleEl);
+    item.appendChild(overlay);
+
+    return item;
+}
+
+function renderCard(id, video, tabIdx) {
+    const card = el('div', { className: 'video-card', 'data-tab': String(tabIdx), 'data-path': video.rel_path.toLowerCase() });
+
+    // Header
+    const header = el('div', { className: 'video-header' });
+    const info = el('div', { className: 'video-info' });
+
+    const titleDiv = el('div', { className: 'video-title', id: `title-${id}` });
+    const titleSpan = el('span', { className: 'title-text' });
+    titleSpan.textContent = video.rel_path;
+    titleDiv.appendChild(titleSpan);
+    titleDiv.appendChild(el('button', { className: 'btn-icon-raw', title: 'Rename', onClick: () => startRename(id) }, '\u270f\ufe0f'));
+    info.appendChild(titleDiv);
+
+    const meta = el('div', { className: 'video-meta' });
+    meta.appendChild(renderChips(video));
+    info.appendChild(meta);
+    header.appendChild(info);
+
+    const actions = el('div', { className: 'video-actions' });
+    if (APP.remote) {
+        actions.appendChild(el('button', { className: 'btn-icon', onClick: () => lb.openVideo(`/video/${id}`), title: 'Play' }, '\u25b6\ufe0f'));
+    } else {
+        actions.appendChild(el('button', { className: 'btn-icon', onClick: () => apiCall('open_file', id), title: 'Open in system player' }, '\u25b6\ufe0f System'));
+        actions.appendChild(el('button', { className: 'btn-icon', onClick: () => lb.openVideo(`/video/${id}`), title: 'Play in browser' }, '\ud83c\udf10 Browser'));
+        actions.appendChild(el('button', { className: 'btn-icon', onClick: () => apiCall('open_dir', id), title: 'Open directory' }, '\ud83d\udcc2 Folder'));
+    }
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    // Chapters grid
+    const grid = el('div', { className: 'chapters-grid' });
+    video.chapters.forEach((ch, i) => grid.appendChild(renderChapterItem(id, i, ch)));
+    card.appendChild(grid);
+
+    return card;
+}
+
+function renderTabBar(count) {
+    const tabCount = Math.ceil(count / PAGE_SIZE);
+    if (tabCount <= 1) return null;
+
+    const bar = el('div', { className: 'tab-bar' });
+    for (let t = 0; t < tabCount; t++) {
+        const start = t * PAGE_SIZE + 1;
+        const end = Math.min((t + 1) * PAGE_SIZE, count);
+        const btn = el('button', {
+            className: 'tab-btn' + (t === APP.activeTab ? ' active' : ''),
+            'data-tab': String(t),
+            onClick: () => { APP.activeTab = t; sessionStorage.setItem('viddeck_tab', t); showTab(); },
+        }, `${start}\u2013${end}`);
+        bar.appendChild(btn);
+    }
+    return bar;
+}
+
+function renderControls() {
+    const s = APP.settings;
+    const row = el('div', { className: 'controls-row' });
+
+    // Search
+    const searchBox = el('div', { className: 'search-box' });
+    searchBox.appendChild(el('span', { className: 'search-icon' }, '\ud83d\udd0d'));
+    const searchInput = el('input', { type: 'search', id: 'search-input', placeholder: 'Search videos...', autocomplete: 'off' });
+    searchInput.value = APP.searchTerm;
+    searchInput.addEventListener('input', e => {
+        APP.searchTerm = e.target.value;
+        sessionStorage.setItem('viddeck_search', APP.searchTerm);
+        filterAndShow();
+    });
+    searchBox.appendChild(searchInput);
+    row.appendChild(searchBox);
+
+    // Controls div
+    const controls = el('div', { className: 'controls' });
+
+    // Mode
+    const modeGroup = el('div', { className: 'control-group' });
+    modeGroup.appendChild(el('label', null, 'Preview Position'));
+    const modeSelect = el('select');
+    modeSelect.appendChild(el('option', { value: 'percent', ...(s.mode === 'percent' ? { selected: '' } : {}) }, 'Percent (%)'));
+    modeSelect.appendChild(el('option', { value: 'seconds', ...(s.mode === 'seconds' ? { selected: '' } : {}) }, 'Seconds (s)'));
+    modeSelect.addEventListener('change', e => { APP.settings.mode = e.target.value; saveSettings(); updateThumbnails(); });
+    modeGroup.appendChild(modeSelect);
+
+    // Offset
+    const offsetInput = el('input', { type: 'number', value: String(s.offset), step: '0.5', style: { width: '80px' } });
+    offsetInput.addEventListener('change', e => { APP.settings.offset = Number(e.target.value); saveSettings(); updateThumbnails(); });
+    modeGroup.appendChild(offsetInput);
+    controls.appendChild(modeGroup);
+
+    // Width
+    const widthGroup = el('div', { className: 'control-group' });
+    widthGroup.appendChild(el('label', null, 'Size'));
+    const widthSelect = el('select');
+    for (const [val, label] of [['640','Small (640px)'],['1280','Medium (1280px)'],['1920','Large (1920px)'],['0','Original Size']]) {
+        widthSelect.appendChild(el('option', { value: val, ...(String(s.width) === val ? { selected: '' } : {}) }, label));
+    }
+    widthSelect.addEventListener('change', e => { APP.settings.width = Number(e.target.value); saveSettings(); updateThumbnails(); });
+    widthGroup.appendChild(widthSelect);
+    controls.appendChild(widthGroup);
+
+    row.appendChild(controls);
+    return row;
+}
+
+// --- Update thumbnails without re-render ---
+
+function updateThumbnails() {
+    document.querySelectorAll('.chapter-thumb').forEach(img => {
+        const oldSrc = img.getAttribute('src');
+        if (!oldSrc) return;
+        // Parse vidId and idx from URL: /thumb/{vidId}/{idx}.jpg?...
+        const match = oldSrc.match(/^\/thumb\/([^/]+)\/(\d+)\.jpg/);
+        if (match) {
+            img.src = thumbUrl(match[1], match[2]);
         }
+    });
+}
 
-        sessionStorage.setItem('viddeck_search', term);
+// --- Tab / Filter logic ---
+
+let sortedIds = [];
+let filteredIds = [];
+
+function getSortedIds() {
+    return Object.entries(APP.videos)
+        .sort((a, b) => a[1].rel_path.localeCompare(b[1].rel_path))
+        .map(e => e[0]);
+}
+
+function filterAndShow() {
+    const term = APP.searchTerm.toLowerCase().trim();
+    const noResults = document.getElementById('no-results');
+    const emptyState = document.getElementById('empty-state');
+    const tabBar = document.querySelector('.tab-bar');
+
+    if (!term) {
+        filteredIds = sortedIds;
+    } else {
+        filteredIds = sortedIds.filter(id => {
+            const v = APP.videos[id];
+            return v && v.rel_path.toLowerCase().includes(term);
+        });
     }
 
-    searchInput.addEventListener('input', (e) => performSearch(e.target.value));
+    // Rebuild tab bar for filtered results
+    if (tabBar) tabBar.remove();
+    const container = document.querySelector('.container');
+    const cardsStart = document.getElementById('cards-container');
 
-    const stored = sessionStorage.getItem('viddeck_search');
-    if (stored) {
-        searchInput.value = stored;
-        performSearch(stored);
+    const maxTab = Math.max(0, Math.ceil(filteredIds.length / PAGE_SIZE) - 1);
+    if (term) APP.activeTab = 0;
+    if (APP.activeTab > maxTab) APP.activeTab = 0;
+
+    if (filteredIds.length > PAGE_SIZE) {
+        const newBar = renderTabBar(filteredIds.length);
+        if (newBar) container.insertBefore(newBar, cardsStart);
+    }
+
+    showTab();
+
+    if (noResults) noResults.style.display = filteredIds.length === 0 && sortedIds.length > 0 ? 'block' : 'none';
+    if (emptyState) emptyState.style.display = sortedIds.length === 0 && !APP.scanning ? '' : 'none';
+}
+
+function showTab() {
+    const start = APP.activeTab * PAGE_SIZE;
+    const pageIds = filteredIds.slice(start, start + PAGE_SIZE);
+
+    const container = document.getElementById('cards-container');
+    container.textContent = '';
+
+    pageIds.forEach((id, i) => {
+        const video = APP.videos[id];
+        if (video) container.appendChild(renderCard(id, video, APP.activeTab));
+    });
+
+    // Update tab bar active state
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.dataset.tab) === APP.activeTab);
+    });
+}
+
+// --- Scanning progress (no re-render) ---
+
+function updateScanProgress() {
+    const count = Object.keys(APP.videos).length;
+    const subtitle = document.getElementById('header-subtitle');
+    if (subtitle) {
+        subtitle.textContent = `Scanning\u2026 ${count} videos found in ${APP.root}`;
     }
 }
 
+// --- Main render ---
 
-// Lightbox — uses DOM APIs to avoid XSS via innerHTML
+function render() {
+    const app = document.getElementById('app');
+    app.textContent = '';
+
+    if (APP.scanning && Object.keys(APP.videos).length === 0) {
+        const screen = el('div', { className: 'scanning-screen' });
+        const content = el('div', { className: 'scanning-content' });
+        content.appendChild(el('div', { className: 'loader' }));
+        content.appendChild(el('h2', null, 'Scanning library...'));
+        screen.appendChild(content);
+        app.appendChild(screen);
+        scheduleFetch(2000);
+        return;
+    }
+
+    const container = el('div', { className: 'container' });
+
+    // Header
+    const header = el('header');
+    const headerContent = el('div', { className: 'header-content' });
+    headerContent.appendChild(el('h1', null, 'VidDeck'));
+    const count = Object.keys(APP.videos).length;
+    const subtitle = el('p', { id: 'header-subtitle' });
+    if (APP.scanning) {
+        subtitle.textContent = `Scanning\u2026 ${count} videos found in ${APP.root}`;
+    } else {
+        subtitle.textContent = `${count} videos in ${APP.root}`;
+    }
+    headerContent.appendChild(subtitle);
+    header.appendChild(headerContent);
+    header.appendChild(renderControls());
+    container.appendChild(header);
+
+    // Cards container
+    const cardsContainer = el('div', { id: 'cards-container' });
+    container.appendChild(cardsContainer);
+
+    // Empty state (hidden by default)
+    const emptyState = el('div', { className: 'empty-state', id: 'empty-state', style: { display: 'none' } });
+    emptyState.appendChild(el('div', { className: 'empty-icon' }, '\ud83d\udced'));
+    emptyState.appendChild(el('h3', null, 'No videos found'));
+    emptyState.appendChild(el('p', null, 'Try a different directory.'));
+    container.appendChild(emptyState);
+
+    // No results (hidden by default)
+    const noResults = el('div', { className: 'no-results', id: 'no-results' });
+    noResults.appendChild(el('div', { className: 'empty-icon' }, '\ud83d\udd0d'));
+    noResults.appendChild(el('h3', null, 'No results'));
+    noResults.appendChild(el('p', null, 'No videos found matching your search.'));
+    container.appendChild(noResults);
+
+    app.appendChild(container);
+
+    // Restore search term
+    APP.searchTerm = sessionStorage.getItem('viddeck_search') || '';
+    const savedTab = parseInt(sessionStorage.getItem('viddeck_tab') || '0');
+    APP.activeTab = savedTab;
+
+    // Compute sorted IDs and filter
+    sortedIds = getSortedIds();
+    filterAndShow();
+
+    // If still scanning, poll for updates (cards stay stable, only header updates)
+    if (APP.scanning) {
+        scheduleFetch(2000);
+    }
+}
+
+// --- Lightbox ---
+
 const lb = {
     el: null,
     init() {
@@ -718,7 +1007,6 @@ const lb = {
     openVideoAt(src, t) {
         this._clear();
         const v = this._createVideo(src);
-        v.id = 'lb-video';
         this.el.appendChild(v);
         this._addCloseBtn();
         this.el.classList.add('active');
@@ -730,18 +1018,23 @@ const lb = {
     }
 };
 
+// --- Init ---
+
 document.addEventListener('DOMContentLoaded', () => {
     lb.init();
-    initSettings();
-    initTabs();
-    initSearch();
-    
-    // Connect to SSE for auto-refresh
-    const evtSource = new EventSource("/api/events");
-    evtSource.addEventListener("message", (e) => {
-        if (e.data === "refresh") {
-            console.log("Filesystem change detected, refreshing...");
-            window.location.reload();
+    loadSettings();
+
+    // Restore search from session
+    APP.searchTerm = sessionStorage.getItem('viddeck_search') || '';
+
+    fetchVideos();
+
+    // SSE for live updates
+    const evtSource = new EventSource('/api/events');
+    evtSource.addEventListener('message', (e) => {
+        if (e.data === 'refresh') {
+            console.log('Filesystem change detected, fetching updates...');
+            fetchVideos();
         }
     });
 });

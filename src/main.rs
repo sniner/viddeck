@@ -18,25 +18,34 @@ use state::AppState;
 use scanner::scan_library;
 use handlers::{
     index_handler, style_handler, script_handler, thumb_handler, video_handler,
-    api_open_handler, api_open_dir_handler, api_rename_handler, sse_handler
+    api_videos_handler, api_open_handler, api_open_dir_handler, api_rename_handler, sse_handler
 };
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Parse arguments
     let args = Args::parse();
-    
+
     // Resolve absolute path
     let root = tokio::fs::canonicalize(&args.path).await
         .map_err(|_| anyhow::anyhow!("Error: {} does not exist.", args.path.display()))?;
 
     println!("Scanning {} for videos...", root.display());
 
+    // Warn if host is not localhost
+    if args.host != "127.0.0.1" && args.host != "::1" && args.host != "localhost" {
+        eprintln!("WARNING: Binding to non-localhost address {}. open/open_dir commands will only work from localhost.", args.host);
+    }
+
+    if args.remote {
+        println!("Remote mode: system open commands disabled.");
+    }
+
     // Init State
     // Initial receiver is unused; subscribers are created via tx.subscribe()
     let (tx, _rx) = tokio::sync::broadcast::channel(100);
-    let state = Arc::new(AppState::new(root.clone(), tx));
-    
+    let state = Arc::new(AppState::new(root.clone(), args.remote, tx));
+
     // Start background scan
     let state_clone = state.clone();
     tokio::spawn(async move {
@@ -54,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/script.js", get(script_handler))
         .route("/thumb/:id/:idx", get(thumb_handler))
         .route("/video/:id", get(video_handler))
+        .route("/api/videos", get(api_videos_handler))
         .route("/api/open_file", post(api_open_handler))
         .route("/api/open_dir", post(api_open_dir_handler))
         .route("/api/rename", post(api_rename_handler))
@@ -62,13 +72,12 @@ async fn main() -> anyhow::Result<()> {
 
     let addr_str = format!("{}:{}", args.host, args.port);
     let addr: SocketAddr = addr_str.parse()?;
-    
+
     println!("\nStarted VidDeck at http://{addr}");
-    println!("Loaded videos will appear automatically (refresh page).");
     println!("Press Ctrl+C to stop.");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
-    
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
+
     Ok(())
 }

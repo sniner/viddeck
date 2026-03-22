@@ -1,53 +1,34 @@
 use axum::{
-    extract::{Path, Query, State},
-    response::{Html, IntoResponse, Response, sse::{Event, Sse}},
+    extract::{Path, Query, State, ConnectInfo},
+    response::{Html, IntoResponse, Response, Json, sse::{Event, Sse}},
     http::{StatusCode, header},
     Form,
 };
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock};
+use std::collections::HashMap;
 use futures_util::stream::Stream;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use tower_http::services::ServeFile;
 use tower::ServiceExt;
 
 use crate::state::AppState;
 use crate::assets::{STYLESHEET, JAVASCRIPT};
-use crate::html::generate_index_html;
+use crate::html::generate_shell_html;
 use crate::ffmpeg::render_thumb;
 use base64::Engine;
 
-// Query Params
-#[derive(Deserialize)]
-pub struct IndexParams {
-    pub mode: Option<String>,
-    pub offset: Option<f64>,
-    pub width: Option<u32>,
+// --- Index (HTML shell) ---
+
+pub async fn index_handler() -> impl IntoResponse {
+    Html(generate_shell_html())
 }
 
-pub async fn index_handler(
-    State(state): State<Arc<AppState>>,
-    Query(params): Query<IndexParams>,
-) -> impl IntoResponse {
-    let mode = params.mode.unwrap_or_else(|| "percent".to_string());
-    let offset = params.offset.unwrap_or(50.0);
-    let width = params.width.unwrap_or(1280);
-
-    let scanning = *state.scanning.read();
-    let count = state.videos.read().len();
-    let root = state.root.to_string_lossy().to_string();
-
-    let videos = {
-        let v = state.videos.read();
-        v.clone()
-    };
-
-    let html = generate_index_html(&videos, count, &root, &mode, offset, width, scanning);
-    Html(html)
-}
+// --- Static assets ---
 
 pub async fn style_handler() -> impl IntoResponse {
     ([
@@ -62,6 +43,75 @@ pub async fn script_handler() -> impl IntoResponse {
         (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
     ], JAVASCRIPT)
 }
+
+// --- /api/videos ---
+
+#[derive(Serialize)]
+struct ApiVideosResponse {
+    root: String,
+    scanning: bool,
+    remote: bool,
+    videos: HashMap<String, ApiVideoEntry>,
+}
+
+#[derive(Serialize)]
+struct ApiVideoEntry {
+    rel_path: String,
+    duration: f64,
+    size: u64,
+    width: u32,
+    height: u32,
+    fps: f64,
+    codec: String,
+    audio_codecs: Vec<String>,
+    chapters: Vec<ApiChapter>,
+}
+
+#[derive(Serialize)]
+struct ApiChapter {
+    start: f64,
+    end: f64,
+    title: String,
+}
+
+pub async fn api_videos_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let scanning = *state.scanning.read();
+    let root = state.root.to_string_lossy().to_string();
+
+    let videos = state.videos.read();
+    let mut api_videos = HashMap::with_capacity(videos.len());
+
+    for (id, entry) in videos.iter() {
+        let chapters = entry.meta.chapters.iter().map(|ch| ApiChapter {
+            start: ch.start,
+            end: ch.end,
+            title: ch.title.clone(),
+        }).collect();
+
+        api_videos.insert(id.clone(), ApiVideoEntry {
+            rel_path: entry.rel_path.to_string_lossy().to_string(),
+            duration: entry.meta.duration,
+            size: entry.meta.size,
+            width: entry.meta.width,
+            height: entry.meta.height,
+            fps: entry.meta.fps,
+            codec: entry.meta.codec.clone(),
+            audio_codecs: entry.meta.audio_codecs.clone(),
+            chapters,
+        });
+    }
+
+    Json(ApiVideosResponse {
+        root,
+        scanning,
+        remote: state.remote,
+        videos: api_videos,
+    })
+}
+
+// --- Thumbnails ---
 
 #[derive(Deserialize)]
 pub struct ThumbParams {
@@ -101,22 +151,13 @@ pub async fn thumb_handler(
         return Ok(([(header::CONTENT_TYPE, "image/jpeg")], data).into_response());
     }
 
-    // Lookup path
-    let path = {
-        let map = state.id_map.read();
-        map.get(&id).cloned()
-    };
-
-    let path = path.ok_or(StatusCode::NOT_FOUND)?;
-
-    // Find chapter info
-    let chapter = {
+    // Lookup path and chapter from videos HashMap
+    let (path, chapter) = {
         let videos = state.videos.read();
-        let entry = videos.iter().find(|v| v.id == id).ok_or(StatusCode::NOT_FOUND)?;
-        entry.meta.chapters.get(idx).cloned()
+        let entry = videos.get(&id).ok_or(StatusCode::NOT_FOUND)?;
+        let ch = entry.meta.chapters.get(idx).cloned().ok_or(StatusCode::NOT_FOUND)?;
+        (entry.path.clone(), ch)
     };
-
-    let chapter = chapter.ok_or(StatusCode::NOT_FOUND)?;
 
     // Calculate timestamp
     let length = (chapter.end - chapter.start).max(0.01);
@@ -143,14 +184,16 @@ pub async fn thumb_handler(
     }
 }
 
+// --- Video streaming ---
+
 pub async fn video_handler(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     req: axum::extract::Request,
 ) -> Result<Response, StatusCode> {
     let path = {
-        let map = state.id_map.read();
-        map.get(&id).cloned()
+        let videos = state.videos.read();
+        videos.get(&id).map(|e| e.path.clone())
     };
 
     let path = path.ok_or(StatusCode::NOT_FOUND)?;
@@ -168,31 +211,44 @@ pub async fn video_handler(
     }
 }
 
-// API Handlers
+// --- API: open file / open directory ---
 
 #[derive(Deserialize)]
 pub struct ApiOpenParams {
     pub id: String,
 }
 
+fn is_localhost(addr: &SocketAddr) -> bool {
+    match addr.ip() {
+        std::net::IpAddr::V4(ip) => ip.is_loopback(),
+        std::net::IpAddr::V6(ip) => ip.is_loopback(),
+    }
+}
+
 pub async fn api_open_handler(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(params): Query<ApiOpenParams>,
 ) -> Result<&'static str, StatusCode> {
-    open_path(&state, &params.id, false)
+    open_path(&state, &params.id, false, &addr)
 }
 
 pub async fn api_open_dir_handler(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(params): Query<ApiOpenParams>,
 ) -> Result<&'static str, StatusCode> {
-    open_path(&state, &params.id, true)
+    open_path(&state, &params.id, true, &addr)
 }
 
-fn open_path(state: &AppState, id: &str, dir: bool) -> Result<&'static str, StatusCode> {
+fn open_path(state: &AppState, id: &str, dir: bool, addr: &SocketAddr) -> Result<&'static str, StatusCode> {
+    if state.remote || !is_localhost(addr) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
     let path = {
-        let map = state.id_map.read();
-        map.get(id).cloned()
+        let videos = state.videos.read();
+        videos.get(id).map(|e| e.path.clone())
     };
 
     if let Some(path) = path {
@@ -214,17 +270,26 @@ fn open_path(state: &AppState, id: &str, dir: bool) -> Result<&'static str, Stat
     }
 }
 
+// --- API: rename ---
+
+#[derive(Serialize)]
+pub struct RenameResponse {
+    old_id: String,
+    new_id: String,
+    rel_path: String,
+}
+
 pub async fn api_rename_handler(
     State(state): State<Arc<AppState>>,
-    Form(params): Form<std::collections::HashMap<String, String>>,
-) -> Result<&'static str, (StatusCode, String)> {
+    Form(params): Form<HashMap<String, String>>,
+) -> Result<Json<RenameResponse>, (StatusCode, String)> {
     let id = params.get("id").ok_or((StatusCode::BAD_REQUEST, "Missing id".into()))?;
     let new_name = params.get("new_name").ok_or((StatusCode::BAD_REQUEST, "Missing new_name".into()))?;
 
     // Get old path
     let old_path = {
-        let map = state.id_map.read();
-        map.get(id).cloned()
+        let videos = state.videos.read();
+        videos.get(id).map(|e| e.path.clone())
     };
 
     let old_path = old_path.ok_or((StatusCode::NOT_FOUND, "File not found".into()))?;
@@ -262,23 +327,26 @@ pub async fn api_rename_handler(
 
     let new_id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(new_path.to_string_lossy().as_bytes());
     let new_rel_path = new_path.strip_prefix(&state.root).unwrap_or(&new_path).to_path_buf();
+    let rel_path_str = new_rel_path.to_string_lossy().to_string();
 
     {
         let mut videos = state.videos.write();
-        let mut map = state.id_map.write();
-
-        map.remove(id);
-        map.insert(new_id.clone(), new_path.clone());
-
-        if let Some(entry) = videos.iter_mut().find(|v| v.id == *id) {
-            entry.id = new_id;
+        if let Some(mut entry) = videos.remove(id) {
+            entry.id.clone_from(&new_id);
             entry.path = new_path;
             entry.rel_path = new_rel_path;
+            videos.insert(new_id.clone(), entry);
         }
     }
 
-    Ok("OK")
+    Ok(Json(RenameResponse {
+        old_id: id.clone(),
+        new_id,
+        rel_path: rel_path_str,
+    }))
 }
+
+// --- SSE ---
 
 pub async fn sse_handler(
     State(state): State<Arc<AppState>>,
