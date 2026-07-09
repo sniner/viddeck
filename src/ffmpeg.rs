@@ -43,6 +43,51 @@ fn ffprobe_path() -> &'static Path {
     &TOOLS.get_or_init(default_tools).ffprobe
 }
 
+/// Oldest `FFmpeg` whose options match what we generate (the NVENC
+/// p-presets exist since 4.3; everything else we use is older).
+const MIN_FFMPEG_VERSION: (u64, u64) = (4, 3);
+
+/// Check that ffmpeg/ffprobe run, log the version, and warn if it is
+/// older than what our command lines were written for.
+pub async fn check_tools() -> Result<()> {
+    let output = Command::new(ffmpeg_path()).arg("-version")
+        .stdin(Stdio::null())
+        .output().await
+        .with_context(|| format!("Failed to run {} — is FFmpeg installed?", ffmpeg_path().display()))?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let banner = text.lines().next().unwrap_or_default();
+    println!("[ffmpeg] {banner}");
+
+    match parse_ffmpeg_version(banner) {
+        Some(version) if version < MIN_FFMPEG_VERSION => {
+            eprintln!(
+                "WARNING: FFmpeg {}.{} is older than {}.{}; some hardware encoder options may not exist. Transcoding falls back to software encoding if the probe fails.",
+                version.0, version.1, MIN_FFMPEG_VERSION.0, MIN_FFMPEG_VERSION.1
+            );
+        }
+        Some(_) => {}
+        None => eprintln!("[ffmpeg] Could not parse the version — continuing anyway."),
+    }
+
+    Command::new(ffprobe_path()).arg("-version")
+        .stdin(Stdio::null())
+        .output().await
+        .with_context(|| format!("Failed to run {} — is ffprobe installed?", ffprobe_path().display()))?;
+    Ok(())
+}
+
+/// Extract (major, minor) from an `ffmpeg -version` banner. Returns None
+/// for git snapshot builds ("N-112345-g...") that carry no release number.
+fn parse_ffmpeg_version(banner: &str) -> Option<(u64, u64)> {
+    // "ffmpeg version 6.1.1 Copyright ..." / "ffmpeg version n7.0-..." etc.
+    let token = banner.split_whitespace().nth(2)?;
+    let token = token.strip_prefix('n').unwrap_or(token);
+    let mut parts = token.split(|c: char| !c.is_ascii_digit());
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    Some((major, minor))
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct VideoMetadata {
     pub duration: f64,
@@ -402,4 +447,27 @@ pub async fn render_thumb(path: &Path, time: f64, width: u16) -> Result<Vec<u8>>
         return Ok(data);
     }
     anyhow::bail!("Failed to generate thumbnail")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_release_build() {
+        assert_eq!(parse_ffmpeg_version("ffmpeg version 6.1.1 Copyright (c) 2000-2023"), Some((6, 1)));
+        assert_eq!(parse_ffmpeg_version("ffmpeg version 4.2.7-0ubuntu0.1 Copyright"), Some((4, 2)));
+    }
+
+    #[test]
+    fn version_tagged_build() {
+        assert_eq!(parse_ffmpeg_version("ffmpeg version n7.0-31-g1652f2f0ba Copyright"), Some((7, 0)));
+        assert_eq!(parse_ffmpeg_version("ffmpeg version 6.0-static https://johnvansickle.com/ffmpeg/"), Some((6, 0)));
+    }
+
+    #[test]
+    fn version_git_snapshot_is_none() {
+        assert_eq!(parse_ffmpeg_version("ffmpeg version N-112345-g0123456789 Copyright"), None);
+        assert_eq!(parse_ffmpeg_version(""), None);
+    }
 }
