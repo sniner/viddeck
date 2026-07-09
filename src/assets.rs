@@ -240,7 +240,7 @@ button.primary:hover { background: var(--primary-hover); }
     font-size: 0.9rem;
     border: 1px solid var(--primary);
     border-radius: 4px;
-    width: 300px;
+    width: min(600px, 60vw);
 }
 
 /* Chapters */
