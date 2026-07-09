@@ -682,7 +682,8 @@ function renderChapterItem(vidId, idx, chapter) {
     item.appendChild(img);
 
     const overlay = el('div', { className: 'chapter-overlay' });
-    overlay.appendChild(el('div', { className: 'chapter-time' }, dur));
+    // Duration prefix so the value does not read as a start position
+    overlay.appendChild(el('div', { className: 'chapter-time' }, '\u23f1\ufe0f ' + dur));
     const titleEl = el('div', { className: 'chapter-title', title: title });
     titleEl.textContent = title;
     overlay.appendChild(titleEl);
