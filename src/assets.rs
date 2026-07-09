@@ -1003,7 +1003,9 @@ const lb = {
         video.addEventListener('click', (e) => e.stopPropagation());
         const source = document.createElement('source');
         source.src = src;
-        source.type = 'video/mp4';
+        // Only transcoded streams are known to be MP4; direct files may be
+        // MKV/AVI/WebM, so let the browser sniff those.
+        if (src.includes('/transcode')) source.type = 'video/mp4';
         video.appendChild(source);
         return video;
     },
