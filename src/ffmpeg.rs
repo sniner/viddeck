@@ -216,34 +216,43 @@ enum HwEncoder {
     Libx264,
 }
 
+impl HwEncoder {
+    /// Args placed before `-i` (hardware device init).
+    fn pre_input_args(&self) -> &'static [&'static str] {
+        match self {
+            HwEncoder::Vaapi => &["-vaapi_device", "/dev/dri/renderD128"],
+            _ => &[],
+        }
+    }
+
+    /// Encoder-specific output args. Used identically by the detection
+    /// probe and the real transcode, so the probe validates the exact
+    /// command line — an encoder whose options do not exist in the
+    /// installed ffmpeg version fails the probe instead of the playback.
+    fn encoder_args(&self) -> &'static [&'static str] {
+        match self {
+            HwEncoder::Vaapi => &["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "24"],
+            HwEncoder::VideoToolbox => &["-c:v", "h264_videotoolbox", "-q:v", "65"],
+            HwEncoder::Amf => &["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "24", "-qp_p", "24"],
+            HwEncoder::Nvenc => &["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "24"],
+            HwEncoder::Qsv => &["-c:v", "h264_qsv", "-preset", "fast", "-global_quality", "24"],
+            HwEncoder::Libx264 => &["-c:v", "libx264", "-preset", "fast", "-crf", "22"],
+        }
+    }
+}
+
 /// Verify an encoder actually works: being listed in `ffmpeg -encoders`
 /// does not guarantee the driver/hardware can encode (missing permissions
-/// on /dev/dri, unsupported profile, ...).
+/// on /dev/dri, unsupported profile, options missing in this version, ...).
 fn test_encoder(variant: &HwEncoder) -> bool {
+    if matches!(variant, HwEncoder::Libx264) {
+        return true;
+    }
     let mut cmd = std::process::Command::new("ffmpeg");
     cmd.args(["-v", "error"]);
-    if matches!(variant, HwEncoder::Vaapi) {
-        cmd.args(["-vaapi_device", "/dev/dri/renderD128"]);
-    }
+    cmd.args(variant.pre_input_args());
     cmd.args(["-f", "lavfi", "-i", "testsrc=duration=0.1:size=320x240:rate=30"]);
-    match variant {
-        HwEncoder::Vaapi => {
-            cmd.args(["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi"]);
-        }
-        HwEncoder::VideoToolbox => {
-            cmd.args(["-c:v", "h264_videotoolbox"]);
-        }
-        HwEncoder::Amf => {
-            cmd.args(["-c:v", "h264_amf"]);
-        }
-        HwEncoder::Nvenc => {
-            cmd.args(["-c:v", "h264_nvenc"]);
-        }
-        HwEncoder::Qsv => {
-            cmd.args(["-c:v", "h264_qsv"]);
-        }
-        HwEncoder::Libx264 => return true,
-    }
+    cmd.args(variant.encoder_args());
     cmd.args(["-f", "null", "-"]);
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     cmd.status().is_ok_and(|s| s.success())
@@ -300,8 +309,8 @@ pub async fn transcode_video(path: &Path, start_time: f64, copy_video: bool) -> 
     let encoder = if copy_video { None } else { Some(hw_encoder()) };
 
     // Pre-input args for hardware device init
-    if let Some(HwEncoder::Vaapi) = encoder {
-        cmd.args(["-vaapi_device", "/dev/dri/renderD128"]);
+    if let Some(enc) = encoder {
+        cmd.args(enc.pre_input_args());
     }
     if start_time > 0.0 {
         // With stream copy the video can only start at the keyframe before
@@ -323,24 +332,8 @@ pub async fn transcode_video(path: &Path, start_time: f64, copy_video: bool) -> 
         None => {
             cmd.args(["-c:v", "copy"]);
         }
-        Some(HwEncoder::Vaapi) => {
-            cmd.args(["-vf", "format=nv12,hwupload"]);
-            cmd.args(["-c:v", "h264_vaapi", "-qp", "24"]);
-        }
-        Some(HwEncoder::VideoToolbox) => {
-            cmd.args(["-c:v", "h264_videotoolbox", "-q:v", "65"]);
-        }
-        Some(HwEncoder::Amf) => {
-            cmd.args(["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "24", "-qp_p", "24"]);
-        }
-        Some(HwEncoder::Nvenc) => {
-            cmd.args(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "24"]);
-        }
-        Some(HwEncoder::Qsv) => {
-            cmd.args(["-c:v", "h264_qsv", "-preset", "fast", "-global_quality", "24"]);
-        }
-        Some(HwEncoder::Libx264) => {
-            cmd.args(["-c:v", "libx264", "-preset", "fast", "-crf", "22"]);
+        Some(enc) => {
+            cmd.args(enc.encoder_args());
         }
     }
     cmd.args([
