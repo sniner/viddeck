@@ -35,21 +35,26 @@ pub fn human_size(size_bytes: u64) -> String {
 }
 
 pub fn generate_shell_html() -> String {
-    String::from(r#"<!doctype html>
+    // The logo template is cloned into the header by script.js: inlined SVG
+    // follows the page's CSS variables, which an <img> cannot (Chromium
+    // ignores prefers-color-scheme inside SVG images).
+    format!(r#"<!doctype html>
 <html>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>VidDeck</title>
+    <link rel="icon" type="image/svg+xml" href="/viddeck.svg">
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
     <div id="app"></div>
     <div id="lightbox" class="lightbox"></div>
+    <div id="logo-template" hidden>{logo}</div>
     <script src="/script.js"></script>
 </body>
 </html>
-"#)
+"#, logo = crate::assets::LOGO_SVG)
 }
 
 #[cfg(test)]

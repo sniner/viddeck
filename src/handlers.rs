@@ -22,7 +22,7 @@ use tokio_util::io::ReaderStream;
 use axum::body::Body;
 
 use crate::state::AppState;
-use crate::assets::{STYLESHEET, JAVASCRIPT};
+use crate::assets::{STYLESHEET, JAVASCRIPT, LOGO_SVG};
 use crate::html::generate_shell_html;
 use crate::ffmpeg::{is_browser_compatible_video, render_thumb, transcode_video};
 use base64::Engine;
@@ -47,6 +47,13 @@ pub async fn script_handler() -> impl IntoResponse {
         (header::CONTENT_TYPE, "application/javascript"),
         (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
     ], JAVASCRIPT)
+}
+
+pub async fn logo_handler() -> impl IntoResponse {
+    ([
+        (header::CONTENT_TYPE, "image/svg+xml"),
+        (header::CACHE_CONTROL, "public, max-age=86400")
+    ], LOGO_SVG)
 }
 
 // --- /api/videos ---

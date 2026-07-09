@@ -72,6 +72,12 @@ header {
     align-items: center;
     gap: 10px;
 }
+.header-content h1 svg {
+    height: 1.8em;
+    width: auto;
+}
+.header-content h1 svg .logo-line { fill: var(--text-main); }
+.header-content h1 svg .logo-fill { fill: var(--card-bg); }
 .header-content p {
     color: var(--text-muted);
     font-size: 0.8rem;

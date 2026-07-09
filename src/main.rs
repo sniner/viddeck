@@ -17,8 +17,9 @@ use cli::Args;
 use state::AppState;
 use scanner::scan_library;
 use handlers::{
-    index_handler, style_handler, script_handler, thumb_handler, video_handler, transcode_handler,
-    api_videos_handler, api_open_handler, api_open_dir_handler, api_rename_handler, sse_handler
+    index_handler, style_handler, script_handler, logo_handler, thumb_handler, video_handler,
+    transcode_handler, api_videos_handler, api_open_handler, api_open_dir_handler,
+    api_rename_handler, sse_handler
 };
 
 #[tokio::main]
@@ -68,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/", get(index_handler))
         .route("/style.css", get(style_handler))
         .route("/script.js", get(script_handler))
+        .route("/viddeck.svg", get(logo_handler))
         .route("/thumb/:id/:idx", get(thumb_handler))
         .route("/video/:id", get(video_handler))
         .route("/video/:id/transcode", get(transcode_handler))
