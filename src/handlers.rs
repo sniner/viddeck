@@ -338,7 +338,9 @@ fn open_path(state: &AppState, id: &str, dir: bool, addr: &SocketAddr) -> Result
             path
         };
 
-        match open::that(target) {
+        // Detached: open::that can block on the launcher's exit status,
+        // which would stall the async worker thread.
+        match open::that_detached(target) {
             Ok(()) => Ok("OK"),
             Err(e) => {
                 eprintln!("[open] Failed to open path: {e}");
