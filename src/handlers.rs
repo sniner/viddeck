@@ -303,10 +303,7 @@ pub struct ApiOpenParams {
 }
 
 fn is_localhost(addr: &SocketAddr) -> bool {
-    match addr.ip() {
-        std::net::IpAddr::V4(ip) => ip.is_loopback(),
-        std::net::IpAddr::V6(ip) => ip.is_loopback(),
-    }
+    addr.ip().is_loopback()
 }
 
 pub async fn api_open_handler(
