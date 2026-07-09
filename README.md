@@ -20,6 +20,10 @@ Video metadata extraction and thumbnail generation depend on FFmpeg. You must ha
 - **Arch Linux**: `sudo pacman -S ffmpeg`
 - **macOS (Homebrew)**: `brew install ffmpeg`
 
+By default the binaries are taken from `PATH`. To pin a specific FFmpeg
+installation, pass `--ffmpeg /path/to/ffmpeg` or set the environment variable
+`VIDDECK_FFMPEG`; `ffprobe` is expected next to the given binary.
+
 ## Installation
 
 You will need the [Rust toolchain](https://rustup.rs/) installed.

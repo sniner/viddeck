@@ -1,9 +1,47 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
 use tokio::process::Command;
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, Context};
+
+struct Tools {
+    ffmpeg: PathBuf,
+    ffprobe: PathBuf,
+}
+
+static TOOLS: OnceLock<Tools> = OnceLock::new();
+
+fn default_tools() -> Tools {
+    Tools { ffmpeg: "ffmpeg".into(), ffprobe: "ffprobe".into() }
+}
+
+/// Set the ffmpeg binary to use (from `--ffmpeg` / `VIDDECK_FFMPEG`).
+/// ffprobe is expected in the same directory; if it is not there, it is
+/// taken from PATH. Must be called before the first ffmpeg invocation.
+pub fn configure_tools(ffmpeg: Option<PathBuf>) {
+    let tools = match ffmpeg {
+        Some(ffmpeg) => {
+            let sibling = ffmpeg.parent()
+                .map(|dir| dir.join(format!("ffprobe{}", std::env::consts::EXE_SUFFIX)));
+            let ffprobe = match sibling {
+                Some(p) if p.is_file() => p,
+                _ => PathBuf::from("ffprobe"),
+            };
+            Tools { ffmpeg, ffprobe }
+        }
+        None => default_tools(),
+    };
+    let _ = TOOLS.set(tools);
+}
+
+fn ffmpeg_path() -> &'static Path {
+    &TOOLS.get_or_init(default_tools).ffmpeg
+}
+
+fn ffprobe_path() -> &'static Path {
+    &TOOLS.get_or_init(default_tools).ffprobe
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct VideoMetadata {
@@ -68,7 +106,7 @@ struct FFProbeTags {
 }
 
 pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
-    let output = Command::new("ffprobe")
+    let output = Command::new(ffprobe_path())
         .args([
             "-v", "error",
             "-print_format", "json",
@@ -170,7 +208,7 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
 }
 
 async fn run_ffmpeg_thumb(path: &Path, seek_time: Option<f64>, width: u16) -> Result<Vec<u8>> {
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = Command::new(ffmpeg_path());
     cmd.args(["-v", "error"]);
     if let Some(t) = seek_time {
         cmd.args(["-ss", &format!("{t:.3}")]);
@@ -248,7 +286,7 @@ fn test_encoder(variant: &HwEncoder) -> bool {
     if matches!(variant, HwEncoder::Libx264) {
         return true;
     }
-    let mut cmd = std::process::Command::new("ffmpeg");
+    let mut cmd = std::process::Command::new(ffmpeg_path());
     cmd.args(["-v", "error"]);
     cmd.args(variant.pre_input_args());
     cmd.args(["-f", "lavfi", "-i", "testsrc=duration=0.1:size=320x240:rate=30"]);
@@ -260,7 +298,7 @@ fn test_encoder(variant: &HwEncoder) -> bool {
 
 fn detect_hw_encoder() -> HwEncoder {
     // Run ffmpeg -encoders synchronously (called once, cached via OnceLock)
-    let Ok(output) = std::process::Command::new("ffmpeg")
+    let Ok(output) = std::process::Command::new(ffmpeg_path())
         .args(["-hide_banner", "-encoders"])
         .output()
     else {
@@ -302,7 +340,7 @@ fn hw_encoder() -> &'static HwEncoder {
 }
 
 pub async fn transcode_video(path: &Path, start_time: f64, copy_video: bool) -> Result<tokio::process::Child> {
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = Command::new(ffmpeg_path());
     cmd.args(["-v", "error"]);
 
     // No encoder needed when the video stream is copied as-is.

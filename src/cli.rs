@@ -27,4 +27,8 @@ pub struct Args {
     /// Read-only mode: disable file renaming
     #[arg(long)]
     pub read_only: bool,
+
+    /// Path to the ffmpeg binary (ffprobe is expected next to it)
+    #[arg(long, env = "VIDDECK_FFMPEG")]
+    pub ffmpeg: Option<PathBuf>,
 }

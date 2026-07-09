@@ -30,6 +30,9 @@ async fn main() -> anyhow::Result<()> {
     let root = tokio::fs::canonicalize(&args.path).await
         .map_err(|_| anyhow::anyhow!("Error: {} does not exist.", args.path.display()))?;
 
+    // Configure the ffmpeg tools before anything uses them
+    ffmpeg::configure_tools(args.ffmpeg.clone());
+
     println!("Scanning {} for videos...", root.display());
 
     // Warn if host is not localhost
