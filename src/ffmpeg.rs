@@ -216,6 +216,39 @@ enum HwEncoder {
     Libx264,
 }
 
+/// Verify an encoder actually works: being listed in `ffmpeg -encoders`
+/// does not guarantee the driver/hardware can encode (missing permissions
+/// on /dev/dri, unsupported profile, ...).
+fn test_encoder(variant: &HwEncoder) -> bool {
+    let mut cmd = std::process::Command::new("ffmpeg");
+    cmd.args(["-v", "error"]);
+    if matches!(variant, HwEncoder::Vaapi) {
+        cmd.args(["-vaapi_device", "/dev/dri/renderD128"]);
+    }
+    cmd.args(["-f", "lavfi", "-i", "testsrc=duration=0.1:size=320x240:rate=30"]);
+    match variant {
+        HwEncoder::Vaapi => {
+            cmd.args(["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi"]);
+        }
+        HwEncoder::VideoToolbox => {
+            cmd.args(["-c:v", "h264_videotoolbox"]);
+        }
+        HwEncoder::Amf => {
+            cmd.args(["-c:v", "h264_amf"]);
+        }
+        HwEncoder::Nvenc => {
+            cmd.args(["-c:v", "h264_nvenc"]);
+        }
+        HwEncoder::Qsv => {
+            cmd.args(["-c:v", "h264_qsv"]);
+        }
+        HwEncoder::Libx264 => return true,
+    }
+    cmd.args(["-f", "null", "-"]);
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.status().is_ok_and(|s| s.success())
+}
+
 fn detect_hw_encoder() -> HwEncoder {
     // Run ffmpeg -encoders synchronously (called once, cached via OnceLock)
     let Ok(output) = std::process::Command::new("ffmpeg")
@@ -239,6 +272,10 @@ fn detect_hw_encoder() -> HwEncoder {
         if text.contains(name) {
             // VAAPI additionally requires the render device
             if matches!(variant, HwEncoder::Vaapi) && !Path::new("/dev/dri/renderD128").exists() {
+                continue;
+            }
+            if !test_encoder(variant) {
+                eprintln!("[transcode] Encoder {name} is listed but not functional, skipping");
                 continue;
             }
             eprintln!("[transcode] Using hardware encoder: {name}");
