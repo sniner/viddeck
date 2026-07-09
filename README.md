@@ -48,7 +48,22 @@ viddeck /path/to/my/videos --host 127.0.0.1 --port 8080
 
 # Automatically watch the directory for changes and refresh the UI
 viddeck /path/to/my/videos --watch
+
+# Share on the LAN: no system open buttons, no file renaming
+viddeck /path/to/my/videos --host 0.0.0.0 --remote --read-only
 ```
+
+### Sharing on a network
+
+VidDeck has **no authentication**. It binds to `127.0.0.1` by default; if you
+bind to another address, everyone who can reach the port can browse and stream
+the whole library — and rename files, unless `--read-only` is set. Only share
+it on networks you trust.
+
+- `--remote` hides the system player/folder buttons, which only make sense on
+  the machine VidDeck runs on, and offers in-browser playback instead.
+- `--read-only` disables file renaming (the server rejects rename requests and
+  the UI hides the rename button).
 
 Once running, VidDeck will output the URL where the web interface is accessible (e.g., `http://127.0.0.1:8765`). Open this URL in your browser.
 
