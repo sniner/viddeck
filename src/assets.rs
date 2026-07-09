@@ -31,6 +31,12 @@ pub const STYLESHEET: &str = r#"
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* Keyboard focus */
+button:focus-visible, select:focus-visible, input:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
 body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     background: var(--bg);
