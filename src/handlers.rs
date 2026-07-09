@@ -8,6 +8,7 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use futures_util::stream::Stream;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
@@ -386,7 +387,9 @@ pub async fn api_rename_handler(
         return Err((StatusCode::BAD_REQUEST, "Invalid filename".into()));
     }
 
-    let new_path = state.root.join(new_name);
+    // Normalize away "." components and duplicate separators so the encoded
+    // id matches what the scanner computes for the same file.
+    let new_path: PathBuf = state.root.join(new_name).components().collect();
 
     // Canonicalize parent to resolve symlinks and verify the path stays within root
     let parent = new_path.parent()
