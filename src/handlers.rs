@@ -23,7 +23,7 @@ use axum::body::Body;
 use crate::state::AppState;
 use crate::assets::{STYLESHEET, JAVASCRIPT};
 use crate::html::generate_shell_html;
-use crate::ffmpeg::{render_thumb, transcode_video};
+use crate::ffmpeg::{is_browser_compatible_video, render_thumb, transcode_video};
 use base64::Engine;
 
 // --- Index (HTML shell) ---
@@ -231,10 +231,10 @@ pub async fn transcode_handler(
     Path(id): Path<String>,
     Query(params): Query<TranscodeParams>,
 ) -> Result<Response, StatusCode> {
-    let path = {
+    let (path, copy_video) = {
         let videos = state.videos.read();
         let entry = videos.get(&id).ok_or(StatusCode::NOT_FOUND)?;
-        entry.path.clone()
+        (entry.path.clone(), is_browser_compatible_video(&entry.meta.codec))
     };
 
     // The permit must outlive this handler: ffmpeg keeps running while the
@@ -243,7 +243,7 @@ pub async fn transcode_handler(
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
     let start_time = params.t.unwrap_or(0.0);
-    let mut child = transcode_video(&path, start_time).await
+    let mut child = transcode_video(&path, start_time, copy_video).await
         .map_err(|e| {
             eprintln!("[transcode] Failed to start ffmpeg: {e}");
             StatusCode::INTERNAL_SERVER_ERROR

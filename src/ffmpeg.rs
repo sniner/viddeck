@@ -191,6 +191,14 @@ async fn run_ffmpeg_thumb(path: &Path, seek_time: Option<f64>, width: u16) -> Re
     }
 }
 
+/// Video codecs browsers can play natively. Must match the frontend's
+/// `BROWSER_COMPAT_VIDEO` list in `assets.rs`.
+const BROWSER_COMPAT_VIDEO: &[&str] = &["h264", "vp8", "vp9", "av1"];
+
+pub fn is_browser_compatible_video(codec: &str) -> bool {
+    BROWSER_COMPAT_VIDEO.contains(&codec.to_lowercase().as_str())
+}
+
 /// Hardware-accelerated H.264 encoder, detected once at first use.
 #[derive(Debug, Clone)]
 enum HwEncoder {
@@ -247,14 +255,15 @@ fn hw_encoder() -> &'static HwEncoder {
     ENCODER.get_or_init(detect_hw_encoder)
 }
 
-pub async fn transcode_video(path: &Path, start_time: f64) -> Result<tokio::process::Child> {
+pub async fn transcode_video(path: &Path, start_time: f64, copy_video: bool) -> Result<tokio::process::Child> {
     let mut cmd = Command::new("ffmpeg");
     cmd.args(["-v", "error"]);
 
-    let encoder = hw_encoder();
+    // No encoder needed when the video stream is copied as-is.
+    let encoder = if copy_video { None } else { Some(hw_encoder()) };
 
     // Pre-input args for hardware device init
-    if let HwEncoder::Vaapi = encoder {
+    if let Some(HwEncoder::Vaapi) = encoder {
         cmd.args(["-vaapi_device", "/dev/dri/renderD128"]);
     }
     if start_time > 0.0 {
@@ -262,23 +271,30 @@ pub async fn transcode_video(path: &Path, start_time: f64) -> Result<tokio::proc
     }
     cmd.arg("-i").arg(path);
     match encoder {
-        HwEncoder::Vaapi => {
+        // Video is already browser-compatible, only the audio needs
+        // re-encoding: stream copy avoids the expensive video encode and
+        // any generation loss. With -ss the copy starts at the previous
+        // keyframe, which is acceptable for chapter seeks.
+        None => {
+            cmd.args(["-c:v", "copy"]);
+        }
+        Some(HwEncoder::Vaapi) => {
             cmd.args(["-vf", "format=nv12,hwupload"]);
             cmd.args(["-c:v", "h264_vaapi", "-qp", "24"]);
         }
-        HwEncoder::VideoToolbox => {
+        Some(HwEncoder::VideoToolbox) => {
             cmd.args(["-c:v", "h264_videotoolbox", "-q:v", "65"]);
         }
-        HwEncoder::Amf => {
+        Some(HwEncoder::Amf) => {
             cmd.args(["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "24", "-qp_p", "24"]);
         }
-        HwEncoder::Nvenc => {
+        Some(HwEncoder::Nvenc) => {
             cmd.args(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "24"]);
         }
-        HwEncoder::Qsv => {
+        Some(HwEncoder::Qsv) => {
             cmd.args(["-c:v", "h264_qsv", "-preset", "fast", "-global_quality", "24"]);
         }
-        HwEncoder::Libx264 => {
+        Some(HwEncoder::Libx264) => {
             cmd.args(["-c:v", "libx264", "-preset", "fast", "-crf", "22"]);
         }
     }
