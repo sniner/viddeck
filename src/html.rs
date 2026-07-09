@@ -1,10 +1,12 @@
+// Test-only mirror of the JS `humanTs` in assets.rs, which is what
+// production uses — keep both implementations in sync.
 #[cfg(test)]
 pub fn human_ts(sec: f64) -> String {
     let total = sec.max(0.0);
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let m = ((total % 3600.0) / 60.0).floor() as u64;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let s = total % 60.0;
+    // floor like the JS version — "{:.0}" alone would round 59.7 up to "60"
+    let s = (total % 60.0).floor();
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let h = (total / 3600.0).floor() as u64;
     if h > 0 {
@@ -14,6 +16,7 @@ pub fn human_ts(sec: f64) -> String {
     }
 }
 
+// Test-only mirror of the JS `humanSize` in assets.rs — see human_ts above.
 #[cfg(test)]
 #[allow(clippy::cast_precision_loss)]
 pub fn human_size(size_bytes: u64) -> String {
@@ -77,6 +80,13 @@ mod tests {
     fn human_ts_negative() {
         // Should clamp to 0
         assert_eq!(human_ts(-5.0), "00:00");
+    }
+
+    #[test]
+    fn regression_human_ts_floors_seconds() {
+        // "{:.0}" rounding produced "01:60" for 119.7 seconds
+        assert_eq!(human_ts(119.7), "01:59");
+        assert_eq!(human_ts(59.7), "00:59");
     }
 
     #[test]
