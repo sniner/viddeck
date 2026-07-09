@@ -222,7 +222,7 @@ pub struct TranscodeParams {
     pub t: Option<f64>,
 }
 
-static TRANSCODE_SEM: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
+static TRANSCODE_SEM: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
 
 pub async fn transcode_handler(
     State(state): State<Arc<AppState>>,
@@ -235,7 +235,9 @@ pub async fn transcode_handler(
         entry.path.clone()
     };
 
-    let _permit = TRANSCODE_SEM.acquire().await
+    // The permit must outlive this handler: ffmpeg keeps running while the
+    // client consumes the stream, so it is held by the wait task below.
+    let permit = TRANSCODE_SEM.clone().acquire_owned().await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
     let start_time = params.t.unwrap_or(0.0);
@@ -252,6 +254,7 @@ pub async fn transcode_handler(
 
     // Spawn a task to wait for the child and log errors
     tokio::spawn(async move {
+        let _permit = permit;
         match child.wait().await {
             Ok(status) if !status.success() => {
                 if let Some(mut stderr) = child.stderr.take() {
