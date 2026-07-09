@@ -82,7 +82,7 @@ struct ApiChapter {
 pub async fn api_videos_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let scanning = *state.scanning.read();
+    let scanning = state.scanning.load(std::sync::atomic::Ordering::Relaxed);
     let root = state.root.to_string_lossy().to_string();
 
     let videos = state.videos.read();

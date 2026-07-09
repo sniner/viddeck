@@ -97,7 +97,7 @@ pub async fn scan_library(state: Arc<AppState>) {
 
     while join_set.join_next().await.is_some() {}
 
-    *state.scanning.write() = false;
+    state.scanning.store(false, std::sync::atomic::Ordering::Relaxed);
     state.notify_refresh();
 }
 

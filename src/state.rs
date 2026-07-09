@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use parking_lot::RwLock;
 use serde::Serialize;
 use crate::ffmpeg::VideoMetadata;
@@ -17,7 +18,7 @@ pub struct VideoEntry {
 pub struct AppState {
     pub root: PathBuf,
     pub videos: RwLock<HashMap<String, VideoEntry>>,
-    pub scanning: RwLock<bool>,
+    pub scanning: AtomicBool,
     pub remote: bool,
     pub read_only: bool,
     pub tx: broadcast::Sender<()>,
@@ -28,7 +29,7 @@ impl AppState {
         Self {
             root,
             videos: RwLock::new(HashMap::new()),
-            scanning: RwLock::new(true),
+            scanning: AtomicBool::new(true),
             remote,
             read_only,
             tx,
