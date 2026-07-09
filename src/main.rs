@@ -8,7 +8,7 @@ mod handlers;
 
 use clap::Parser;
 use std::sync::Arc;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use axum::{
     routing::{get, post},
     Router,
@@ -71,8 +71,15 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/events", get(sse_handler))
         .with_state(state);
 
-    let addr_str = format!("{}:{}", args.host, args.port);
-    let addr: SocketAddr = addr_str.parse()?;
+    // Accept plain IPs (v4 and v6 without brackets) as well as hostnames
+    // like "localhost", which SocketAddr::parse cannot handle.
+    let addr: SocketAddr = match args.host.parse::<IpAddr>() {
+        Ok(ip) => SocketAddr::new(ip, args.port),
+        Err(_) => tokio::net::lookup_host((args.host.as_str(), args.port)).await
+            .ok()
+            .and_then(|mut addrs| addrs.next())
+            .ok_or_else(|| anyhow::anyhow!("Error: cannot resolve host {}", args.host))?,
+    };
 
     println!("\nStarted VidDeck at http://{addr}");
     println!("Press Ctrl+C to stop.");
