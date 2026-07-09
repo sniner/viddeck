@@ -151,19 +151,23 @@ pub async fn thumb_handler(
     if width > 1920 { width = 1920; }
     if width < 100 && width != 0 { width = 640; }
 
-    let cache_key = format!("{id}-{idx}-{mode}-{offset}-{width}");
+    // Lookup path, chapter and mtime from videos HashMap
+    let (path, chapter, modified) = {
+        let videos = state.videos.read();
+        let entry = videos.get(&id).ok_or(StatusCode::NOT_FOUND)?;
+        let ch = entry.meta.chapters.get(idx).cloned().ok_or(StatusCode::NOT_FOUND)?;
+        (entry.path.clone(), ch, entry.modified)
+    };
+
+    // The mtime keys the cache so a replaced file gets fresh thumbnails
+    let mtime = modified
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    let cache_key = format!("{id}-{idx}-{mode}-{offset}-{width}-{mtime}");
 
     if let Some(data) = THUMB_CACHE.get(&cache_key).await {
         return Ok(([(header::CONTENT_TYPE, "image/jpeg")], data).into_response());
     }
-
-    // Lookup path and chapter from videos HashMap
-    let (path, chapter) = {
-        let videos = state.videos.read();
-        let entry = videos.get(&id).ok_or(StatusCode::NOT_FOUND)?;
-        let ch = entry.meta.chapters.get(idx).cloned().ok_or(StatusCode::NOT_FOUND)?;
-        (entry.path.clone(), ch)
-    };
 
     // Calculate timestamp
     let length = (chapter.end - chapter.start).max(0.01);
