@@ -80,7 +80,7 @@ pub async fn scan_library(state: Arc<AppState>) {
         }
     })
     .await
-    .unwrap();
+    .expect("walkdir task panicked");
 
     let sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_SCANS));
     let mut join_set = tokio::task::JoinSet::new();
@@ -146,7 +146,7 @@ async fn run_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
         Some(watcher)
     })
     .await
-    .unwrap();
+    .expect("watcher setup task panicked");
 
     if watcher.is_none() {
         anyhow::bail!("File watching disabled due to setup error.");
