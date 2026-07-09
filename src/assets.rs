@@ -571,6 +571,7 @@ async function submitRename(id) {
 
         if (res.ok) {
             const result = await res.json();
+            delete renameState[id];
             // Update local state
             const entry = APP.videos[result.old_id];
             if (entry) {
