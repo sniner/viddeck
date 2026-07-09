@@ -23,4 +23,8 @@ pub struct Args {
     /// Remote mode: disable system open commands (no local player/folder buttons)
     #[arg(long)]
     pub remote: bool,
+
+    /// Read-only mode: disable file renaming
+    #[arg(long)]
+    pub read_only: bool,
 }

@@ -55,6 +55,7 @@ struct ApiVideosResponse {
     root: String,
     scanning: bool,
     remote: bool,
+    read_only: bool,
     videos: HashMap<String, ApiVideoEntry>,
 }
 
@@ -111,6 +112,7 @@ pub async fn api_videos_handler(
         root,
         scanning,
         remote: state.remote,
+        read_only: state.read_only,
         videos: api_videos,
     })
 }
@@ -354,6 +356,10 @@ pub async fn api_rename_handler(
     State(state): State<Arc<AppState>>,
     Form(params): Form<HashMap<String, String>>,
 ) -> Result<Json<RenameResponse>, (StatusCode, String)> {
+    if state.read_only {
+        return Err((StatusCode::FORBIDDEN, "Server is read-only".into()));
+    }
+
     let id = params.get("id").ok_or((StatusCode::BAD_REQUEST, "Missing id".into()))?;
     let new_name = params.get("new_name").ok_or((StatusCode::BAD_REQUEST, "Missing new_name".into()))?;
 

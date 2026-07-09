@@ -438,6 +438,7 @@ const APP = {
     root: '',
     scanning: false,
     remote: false,
+    readOnly: false,
     settings: { mode: 'percent', offset: 50, width: 1280 },
     searchTerm: '',
     activeTab: 0,
@@ -521,6 +522,7 @@ async function fetchVideos() {
         APP.root = data.root;
         APP.scanning = data.scanning;
         APP.remote = data.remote;
+        APP.readOnly = data.read_only;
 
         if (wasScanning && !APP.scanning) {
             // Scan just finished — full render with final sorted list
@@ -699,7 +701,9 @@ function renderCard(id, video, tabIdx) {
     const titleSpan = el('span', { className: 'title-text' });
     titleSpan.textContent = video.rel_path;
     titleDiv.appendChild(titleSpan);
-    titleDiv.appendChild(el('button', { className: 'btn-icon-raw', title: 'Rename', onClick: () => startRename(id) }, '\u270f\ufe0f'));
+    if (!APP.readOnly) {
+        titleDiv.appendChild(el('button', { className: 'btn-icon-raw', title: 'Rename', onClick: () => startRename(id) }, '\u270f\ufe0f'));
+    }
     info.appendChild(titleDiv);
 
     const meta = el('div', { className: 'video-meta' });

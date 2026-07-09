@@ -35,6 +35,9 @@ async fn main() -> anyhow::Result<()> {
     // Warn if host is not localhost
     if args.host != "127.0.0.1" && args.host != "::1" && args.host != "localhost" {
         eprintln!("WARNING: Binding to non-localhost address {}. open/open_dir commands will only work from localhost.", args.host);
+        if !args.read_only {
+            eprintln!("WARNING: File renaming is enabled for all clients. Use --read-only to disable.");
+        }
     }
 
     if args.remote {
@@ -44,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     // Init State
     // Initial receiver is unused; subscribers are created via tx.subscribe()
     let (tx, _rx) = tokio::sync::broadcast::channel(100);
-    let state = Arc::new(AppState::new(root.clone(), args.remote, tx));
+    let state = Arc::new(AppState::new(root.clone(), args.remote, args.read_only, tx));
 
     // Start background scan
     let state_clone = state.clone();

@@ -19,16 +19,18 @@ pub struct AppState {
     pub videos: RwLock<HashMap<String, VideoEntry>>,
     pub scanning: RwLock<bool>,
     pub remote: bool,
+    pub read_only: bool,
     pub tx: broadcast::Sender<()>,
 }
 
 impl AppState {
-    pub fn new(root: PathBuf, remote: bool, tx: broadcast::Sender<()>) -> Self {
+    pub fn new(root: PathBuf, remote: bool, read_only: bool, tx: broadcast::Sender<()>) -> Self {
         Self {
             root,
             videos: RwLock::new(HashMap::new()),
             scanning: RwLock::new(true),
             remote,
+            read_only,
             tx,
         }
     }
