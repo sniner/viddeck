@@ -855,6 +855,15 @@ function filterAndShow() {
 
     showTab();
 
+    // Reflect the filter in the header count
+    const subtitle = document.getElementById('header-subtitle');
+    if (subtitle && !APP.scanning) {
+        const total = Object.keys(APP.videos).length;
+        subtitle.textContent = term
+            ? `${filteredIds.length} of ${total} videos in ${APP.root}`
+            : `${total} videos in ${APP.root}`;
+    }
+
     if (noResults) noResults.style.display = filteredIds.length === 0 && sortedIds.length > 0 ? 'block' : 'none';
     if (emptyState) emptyState.style.display = sortedIds.length === 0 && !APP.scanning ? '' : 'none';
 }
