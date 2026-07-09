@@ -254,19 +254,26 @@ pub async fn transcode_handler(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    // Spawn a task to wait for the child and log errors
+    // Spawn a task to wait for the child and log errors. stderr must be
+    // drained concurrently: waiting first would deadlock if ffmpeg fills
+    // the pipe buffer with error output before exiting.
     tokio::spawn(async move {
         let _permit = permit;
+        let stderr = child.stderr.take();
+        let stderr_task = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut buf = Vec::new();
+            if let Some(mut stderr) = stderr {
+                let _ = stderr.read_to_end(&mut buf).await;
+            }
+            buf
+        });
         match child.wait().await {
             Ok(status) if !status.success() => {
-                if let Some(mut stderr) = child.stderr.take() {
-                    use tokio::io::AsyncReadExt;
-                    let mut buf = Vec::new();
-                    let _ = stderr.read_to_end(&mut buf).await;
-                    let msg = String::from_utf8_lossy(&buf);
-                    if !msg.is_empty() && !msg.contains("Broken pipe") {
-                        eprintln!("[transcode] ffmpeg stderr: {msg}");
-                    }
+                let buf = stderr_task.await.unwrap_or_default();
+                let msg = String::from_utf8_lossy(&buf);
+                if !msg.is_empty() && !msg.contains("Broken pipe") {
+                    eprintln!("[transcode] ffmpeg stderr: {msg}");
                 }
             }
             Err(e) => eprintln!("[transcode] Failed to wait for ffmpeg: {e}"),
