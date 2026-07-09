@@ -304,6 +304,14 @@ pub async fn transcode_video(path: &Path, start_time: f64, copy_video: bool) -> 
         cmd.args(["-vaapi_device", "/dev/dri/renderD128"]);
     }
     if start_time > 0.0 {
+        // With stream copy the video can only start at the keyframe before
+        // start_time, but accurate seeking trims the audio exactly AT
+        // start_time — the resulting offset (up to one GOP) plays audibly
+        // out of sync in browsers. Take the audio from the keyframe too;
+        // starting a chapter slightly early is fine.
+        if copy_video {
+            cmd.arg("-noaccurate_seek");
+        }
         cmd.args(["-ss", &format!("{start_time:.3}")]);
     }
     cmd.arg("-i").arg(path);
