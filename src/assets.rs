@@ -1012,7 +1012,7 @@ const lb = {
         actions.className = 'lightbox-actions';
         const playBtn = document.createElement('button');
         playBtn.className = 'lightbox-btn';
-        playBtn.title = 'Im Browser abspielen';
+        playBtn.title = 'Play in browser';
         playBtn.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="white"><path d="M8 5v14l11-7z"/></svg>';
         const playSrc = videoSrcAt(vidId, startSec);
         playBtn.addEventListener('click', (e) => { e.stopPropagation(); lb.openVideoAt(playSrc, t); });
