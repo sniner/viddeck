@@ -40,22 +40,29 @@ pub async fn process_single_video(path: &Path, root: &Path, state: &Arc<AppState
         return false;
     }
 
-    if let Ok(meta) = get_extended_metadata(path).await
-        && meta.duration > 0.0
-    {
-        let rel_path = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-
-        let entry = VideoEntry {
-            id: id.clone(),
-            path: path.to_path_buf(),
-            rel_path,
-            meta,
-            modified: current_modified,
-        };
-        state.videos.write().insert(id, entry);
-        return true;
+    let meta = match get_extended_metadata(path).await {
+        Ok(meta) => meta,
+        Err(e) => {
+            eprintln!("[scan] Failed to probe {}: {e}", path.display());
+            return false;
+        }
+    };
+    if meta.duration <= 0.0 {
+        eprintln!("[scan] Skipping {}: no duration reported", path.display());
+        return false;
     }
-    false
+
+    let rel_path = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+
+    let entry = VideoEntry {
+        id: id.clone(),
+        path: path.to_path_buf(),
+        rel_path,
+        meta,
+        modified: current_modified,
+    };
+    state.videos.write().insert(id, entry);
+    true
 }
 
 pub async fn scan_library(state: Arc<AppState>) {

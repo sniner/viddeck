@@ -31,9 +31,13 @@ struct FFProbeOutput {
     chapters: Option<Vec<FFProbeChapter>>,
 }
 
+// Fields are individually optional: a missing key must not fail the whole
+// deserialization, otherwise the video silently disappears from the library.
 #[derive(Deserialize)]
 struct FFProbeFormat {
+    #[serde(default)]
     duration: String,
+    #[serde(default)]
     size: String,
 }
 
