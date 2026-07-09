@@ -389,13 +389,28 @@ pub async fn api_rename_handler(
     let parent = new_path.parent()
         .ok_or((StatusCode::BAD_REQUEST, "Invalid path".into()))?;
 
-    // Create parent dirs if needed (before canonicalize)
+    let canonical_root = state.root.canonicalize()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Check containment BEFORE creating directories: a symlink inside the
+    // root could otherwise make create_dir_all leave directories outside
+    // the library even though the rename itself gets rejected afterwards.
+    let mut existing = parent;
+    while !existing.exists() {
+        existing = existing.parent()
+            .ok_or((StatusCode::BAD_REQUEST, "Invalid path".into()))?;
+    }
+    let canonical_existing = existing.canonicalize()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if !canonical_existing.starts_with(&canonical_root) {
+        return Err((StatusCode::BAD_REQUEST, "Path escapes root directory".into()));
+    }
+
+    // Create parent dirs if needed
     tokio::fs::create_dir_all(parent).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let canonical_parent = parent.canonicalize()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let canonical_root = state.root.canonicalize()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if !canonical_parent.starts_with(&canonical_root) {
