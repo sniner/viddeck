@@ -490,14 +490,14 @@ function render() {
     // Header
     const header = el('header');
     const headerContent = el('div', { className: 'header-content' });
-    const h1 = el('h1', null);
     // Inline clone of the logo so it follows the theme's CSS variables
     const logoTpl = document.getElementById('logo-template');
     if (logoTpl && logoTpl.firstElementChild) {
-        h1.appendChild(logoTpl.firstElementChild.cloneNode(true));
+        headerContent.appendChild(logoTpl.firstElementChild.cloneNode(true));
     }
-    h1.appendChild(document.createTextNode('VidDeck'));
-    headerContent.appendChild(h1);
+    const headerText = el('div', { className: 'header-text' });
+    const h1 = el('h1', null, 'VidDeck');
+    headerText.appendChild(h1);
     const count = Object.keys(APP.videos).length;
     const subtitle = el('p', { id: 'header-subtitle' });
     if (APP.scanning) {
@@ -505,7 +505,8 @@ function render() {
     } else {
         subtitle.textContent = `${count} videos in ${APP.root}`;
     }
-    headerContent.appendChild(subtitle);
+    headerText.appendChild(subtitle);
+    headerContent.appendChild(headerText);
     header.appendChild(headerContent);
     header.appendChild(renderControls());
     container.appendChild(header);

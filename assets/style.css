@@ -64,24 +64,27 @@ header {
     gap: 20px;
 }
 
+.header-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.header-content > svg {
+    height: 3em;
+    width: auto;
+    flex-shrink: 0;
+}
+.header-content svg .logo-line { fill: var(--text-main); }
+.header-content svg .logo-fill { fill: var(--card-bg); }
 .header-content h1 {
     font-size: 1.25rem;
     font-weight: 700;
     color: var(--text-main);
-    display: flex;
-    align-items: center;
-    gap: 10px;
 }
-.header-content h1 svg {
-    height: 1.8em;
-    width: auto;
-}
-.header-content h1 svg .logo-line { fill: var(--text-main); }
-.header-content h1 svg .logo-fill { fill: var(--card-bg); }
 .header-content p {
     color: var(--text-muted);
     font-size: 0.8rem;
-    margin-top: 4px;
+    margin-top: 2px;
 }
 
 /* Controls */
