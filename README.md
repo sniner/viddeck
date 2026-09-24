@@ -1,28 +1,29 @@
 # VidDeck
 
-VidDeck is a fast, lightweight, and modern web-based video library viewer and manager written in Rust. It automatically scans a given directory for video files, extracts thumbnails and metadata (such as resolution, framerate, codec, and chapters) using `ffprobe`/`ffmpeg`, and serves them in a responsive, modern web interface.
+VidDeck shows the videos in a directory tree as a library in the web browser:
+one card per video, with a thumbnail for each chapter, the duration, resolution,
+codecs and file size. Videos play in the browser or in the player of the system.
+VidDeck reads the videos with FFmpeg. It keeps no database, and it changes
+nothing in the directory unless you rename a file.
 
 ## Features
 
-- **Fast scanning**: Blistering fast directory scanning and caching of metadata.
-- **Modern UI**: A responsive, dark-mode first design.
-- **Live Search**: Instant client-side filtering by video title or path.
-- **Smart Thumbnails**: Dynamic thumbnail generation based on chapters, scrub position (percent or seconds), and video size.
-- **System Integration**: Open files or their containing directories directly in your default system file explorer or media player.
-- **Inline Playing**: Stream and play videos directly in your browser.
-- **File Management**: Rename video files directly from the UI.
-
-## Prerequisites
-
-Video metadata extraction and thumbnail generation depend on FFmpeg. You must have `ffmpeg` and `ffprobe` installed and available in your system's `PATH`.
-
-- **Ubuntu/Debian**: `sudo apt install ffmpeg`
-- **Arch Linux**: `sudo pacman -S ffmpeg`
-- **macOS (Homebrew)**: `brew install ffmpeg`
-
-By default the binaries are taken from `PATH`. To pin a specific FFmpeg
-installation, pass `--ffmpeg /path/to/ffmpeg` or set the environment variable
-`VIDDECK_FFMPEG`; `ffprobe` is expected next to the given binary.
+- **Library** of all MKV, MP4, M4V, AVI, MOV and WebM files below a directory,
+  in pages of 50, with duration, file size, resolution, frame rate and the video
+  and audio codecs of each video
+- **Chapter thumbnails**: one per chapter, or one for a video without chapters.
+  You choose where in the chapter the thumbnail is taken (percent or seconds) and
+  how large it is. A click enlarges it, with a button that plays the video from
+  that chapter
+- **Search** by file name or path, as you type
+- **Playback** in the browser or in the default player of the system. A video the
+  browser cannot play, such as HEVC video or AC3 audio, is converted while it
+  plays, with a hardware encoder where one is available
+- **Open the folder** of a video in the file manager
+- **Rename** a video, or move it into a subdirectory of the library
+- **Follow changes** with `--watch`: new, changed and removed files show up in
+  open browser windows without a reload
+- Light and dark theme, following the system setting
 
 ## Installation
 
@@ -44,52 +45,75 @@ Every [release](https://github.com/sniner/viddeck/releases) includes:
 
 ### From source
 
-You will need the [Rust toolchain](https://rustup.rs/) installed.
-
-Clone the repository and build using Cargo:
+With the [Rust toolchain](https://rustup.rs/) installed:
 
 ```bash
 cargo build --release
 ```
 
-The compiled binary will be available at `./target/release/viddeck`.
+The program is then `target/release/viddeck`.
+
+### FFmpeg
+
+VidDeck needs `ffmpeg` and `ffprobe`, the programs of FFmpeg. Homebrew installs
+them with VidDeck; otherwise install FFmpeg with your package manager:
+
+- **Ubuntu/Debian**: `sudo apt install ffmpeg`
+- **Arch Linux**: `sudo pacman -S ffmpeg`
+- **macOS**: `brew install ffmpeg`
+
+VidDeck looks for both in `PATH`. To use another FFmpeg installation, pass
+`--ffmpeg /path/to/ffmpeg` or set `VIDDECK_FFMPEG`; `ffprobe` is then taken from
+the same directory. VidDeck stops at startup if it cannot run them, and warns if
+FFmpeg is older than 4.3.
 
 ## Usage
 
-Start VidDeck by providing the path to a directory containing video files.
+```bash
+viddeck [OPTIONS] [PATH]
+```
+
+`PATH` is the directory with the videos, by default the current directory.
+VidDeck prints the address of its web interface, `http://127.0.0.1:8765` unless
+you change it; open that address in a browser. Ctrl+C stops VidDeck.
+
+At every start, VidDeck reads all videos with `ffprobe`. For a large collection
+this takes a while. The browser shows the library as soon as the first videos
+are found, and the complete list when the scan is done.
+
+| Option | |
+|---|---|
+| `--host HOST` | Address to listen on, by default `127.0.0.1`: an IP address (IPv6 with or without brackets) or a hostname |
+| `--port PORT` | Port to listen on, by default `8765` |
+| `-w`, `--watch` | Follow changes to the directory while VidDeck runs |
+| `--remote` | Replace the System, Browser and Folder buttons with one Play button for playback in the browser |
+| `--read-only` | Disable renaming |
+| `--ffmpeg PATH` | The `ffmpeg` program to use, see [FFmpeg](#ffmpeg); also `VIDDECK_FFMPEG` |
 
 ```bash
-# Scan the current directory
-viddeck .
+# The videos in the current directory
+viddeck
 
-# Scan a specific directory
-viddeck /path/to/my/videos
+# Another directory, on another port
+viddeck --port 8080 /path/to/videos
 
-# Bind to a specific host and port
-viddeck /path/to/my/videos --host 127.0.0.1 --port 8080
+# Follow changes to the directory
+viddeck --watch /path/to/videos
 
-# Automatically watch the directory for changes and refresh the UI
-viddeck /path/to/my/videos --watch
-
-# Share on the LAN: no system open buttons, no file renaming
-viddeck /path/to/my/videos --host 0.0.0.0 --remote --read-only
+# Share on the local network, without the system buttons and without renaming
+viddeck --host 0.0.0.0 --remote --read-only /path/to/videos
 ```
 
 ### Sharing on a network
 
-VidDeck has **no authentication**. It binds to `127.0.0.1` by default; if you
-bind to another address, everyone who can reach the port can browse and stream
-the whole library — and rename files, unless `--read-only` is set. Only share
-it on networks you trust.
+VidDeck has no authentication. By default it listens on `127.0.0.1`, so only
+the machine it runs on can reach it. With another address, anyone who can reach
+the port can browse and play the whole library, and rename files unless
+`--read-only` is set. Share it only on networks you trust.
 
-- `--remote` hides the system player/folder buttons, which only make sense on
-  the machine VidDeck runs on, and offers in-browser playback instead.
-- `--read-only` disables file renaming (the server rejects rename requests and
-  the UI hides the rename button).
-
-Once running, VidDeck will output the URL where the web interface is accessible (e.g., `http://127.0.0.1:8765`). Open this URL in your browser.
-
-*Note: The first time you launch VidDeck for a large directory, it will take some time to extract metadata (duration, resolution, chapters) for all videos via `ffprobe`. You can watch the progress live in your browser.*
+The System and Folder buttons open a program on the machine VidDeck runs on, so
+they work only in a browser on that machine. `--remote` replaces them with
+playback in the browser, for everyone else.
 
 ## License
 
