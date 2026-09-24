@@ -2,89 +2,250 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    tags: ['v*.*.*']
+  workflow_dispatch:
 
-permissions:
-  contents: write
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
+  verify-version:
+    # Tag-pushes only: refuse to build a release whose git tag does not match
+    # `[package].version` in Cargo.toml. Catches the common "tagged v0.2.0 but
+    # forgot to bump Cargo.toml" mistake before any build minutes are spent.
+    name: Verify tag matches Cargo.toml version
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compare git tag with [package].version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(awk '
+              /^\[package\]/ { in_pkg=1; next }
+              /^\[/          { in_pkg=0 }
+              in_pkg && /^[[:space:]]*version[[:space:]]*=/ {
+                  gsub(/^[[:space:]]*version[[:space:]]*=[[:space:]]*"/, "")
+                  gsub(/".*$/, "")
+                  print
+                  exit
+              }
+          ' Cargo.toml)
+          echo "Git tag (stripped):  $tag"
+          echo "Cargo.toml version:  $pkg"
+          if [ "$tag" != "$pkg" ]; then
+              echo "::error::Git tag v$tag does not match [package].version $pkg — bump Cargo.toml before tagging."
+              exit 1
+          fi
+          echo "OK: tag and Cargo.toml version match."
+
   build:
-    name: Build release on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.target }}
+    needs: verify-version
+    # Run when the gate passed, or when it was skipped (workflow_dispatch with no
+    # tag — useful as a manual smoke build).
+    if: ${{ always() && (needs.verify-version.result == 'success' || needs.verify-version.result == 'skipped') }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            artifact_name: viddeck
-            asset_name: viddeck-linux-amd64
-          - os: windows-latest
-            artifact_name: viddeck.exe
-            asset_name: viddeck-windows-amd64.exe
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            apt_packages: musl-tools
+            asset_suffix: x86_64-linux-musl
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            apt_packages: musl-tools
+            asset_suffix: aarch64-linux-musl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install apt packages
+        if: matrix.apt_packages != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.apt_packages }}
+
+      - name: Build viddeck
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Verify static linkage
+        if: contains(matrix.target, 'musl')
+        run: |
+          BIN=target/${{ matrix.target }}/release/viddeck
+          file "$BIN"
+          # file(1) reports musl binaries as "statically linked" (classic) or
+          # "static-pie linked" (modern PIE). Accept both.
+          if ! file "$BIN" | grep -qE "static(ally|-pie)? linked"; then
+            echo "ERROR: viddeck is not statically linked"
+            exit 1
+          fi
+          echo "OK: $(du -h "$BIN" | cut -f1) statically linked binary"
+
+      - name: Strip release binary
+        run: strip target/${{ matrix.target }}/release/viddeck
+
+      - name: Stage binary with versioned name
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/viddeck" \
+             "dist/viddeck-${GITHUB_REF_NAME}-${{ matrix.asset_suffix }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: viddeck-${{ matrix.asset_suffix }}
+          path: dist/viddeck-*
+          if-no-files-found: error
+          retention-days: 7
+
+  build-macos:
+    # Universal binary: both Apple targets built on one arm64 runner, merged
+    # with lipo. Kept out of the Linux matrix — the steps (two targets, lipo,
+    # no static-linkage check) share almost nothing with the musl builds.
+    name: Build macOS universal
+    needs: verify-version
+    if: ${{ always() && (needs.verify-version.result == 'success' || needs.verify-version.result == 'skipped') }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-universal
+
+      - name: Build viddeck (both architectures)
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: Merge into a universal binary
+        run: |
+          mkdir -p dist
+          lipo -create \
+            target/aarch64-apple-darwin/release/viddeck \
+            target/x86_64-apple-darwin/release/viddeck \
+            -output "dist/viddeck-${GITHUB_REF_NAME}-macos-universal"
+          strip "dist/viddeck-${GITHUB_REF_NAME}-macos-universal"
+
+      - name: Verify universal binary
+        run: |
+          BIN="dist/viddeck-${GITHUB_REF_NAME}-macos-universal"
+          lipo -archs "$BIN"
+          for arch in x86_64 arm64; do
+            if ! lipo -archs "$BIN" | grep -qw "$arch"; then
+              echo "ERROR: $arch slice missing from universal binary"
+              exit 1
+            fi
+          done
+          # Smoke test: the arm64 slice runs on this runner.
+          "$BIN" --version
+          echo "OK: $(du -h "$BIN" | cut -f1) universal binary"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: viddeck-macos-universal
+          path: dist/viddeck-*
+          if-no-files-found: error
+          retention-days: 7
+
+  build-windows:
+    # Kept out of the Linux matrix for the same reason as the macOS build:
+    # no musl target and no static-linkage check.
+    name: Build Windows x86_64
+    needs: verify-version
+    if: ${{ always() && (needs.verify-version.result == 'success' || needs.verify-version.result == 'skipped') }}
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build
-        run: cargo build --release
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-windows
 
-      - name: Rename binary for upload
-        shell: bash
+      - name: Build viddeck
+        run: cargo build --release --locked
+
+      - name: Stage binary with versioned name
         run: |
-          mv target/release/${{ matrix.artifact_name }} target/release/${{ matrix.asset_name }}
+          mkdir -p dist
+          BIN="dist/viddeck-${GITHUB_REF_NAME}-x86_64-windows.exe"
+          cp target/release/viddeck.exe "$BIN"
+          # Smoke test: the runner is x86_64 Windows.
+          "$BIN" --version
+          echo "OK: $(du -h "$BIN" | cut -f1) Windows binary"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.asset_name }}
-          path: target/release/${{ matrix.asset_name }}
-
-  build-macos:
-    name: Build macOS Universal Binary
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain with both targets
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-
-      - name: Build aarch64
-        run: cargo build --release --target aarch64-apple-darwin
-
-      - name: Build x86_64
-        run: cargo build --release --target x86_64-apple-darwin
-
-      - name: Create Universal Binary
-        run: |
-          lipo -create \
-            target/aarch64-apple-darwin/release/viddeck \
-            target/x86_64-apple-darwin/release/viddeck \
-            -output viddeck-macos-universal
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: viddeck-macos-universal
-          path: viddeck-macos-universal
+          name: viddeck-x86_64-windows
+          path: dist/viddeck-*
+          if-no-files-found: error
+          retention-days: 7
 
   release:
-    name: Create Release
-    needs: [build, build-macos]
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, build-macos, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Download all workflow run artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v8
         with:
-          path: release-assets
+          path: dist
           merge-multiple: true
 
-      - name: Upload binaries to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release-assets/*
-          generate_release_notes: true
+      - name: List assets
+        run: ls -la dist/
+
+      - name: Extract release notes from CHANGELOG.md
+        # Release notes = the CHANGELOG section for this version. Single source of
+        # truth: the curated changelog, not a separate release-commit body.
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+              $0 ~ "^## \\[" ver "\\]" { grab=1; next }
+              grab && /^## \[/          { exit }
+              grab                      { print }
+          ' CHANGELOG.md | sed -e '/./,$!d' > release-notes.md
+          if [ ! -s release-notes.md ]; then
+              echo "::error::No CHANGELOG.md section found for [$version] — add one before tagging."
+              exit 1
+          fi
+          echo "----- release notes -----"
+          cat release-notes.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            dist/viddeck-*
