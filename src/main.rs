@@ -30,16 +30,17 @@ async fn main() -> anyhow::Result<()> {
     // Resolve absolute path
     let root = tokio::fs::canonicalize(&args.path)
         .await
-        .map_err(|_| anyhow::anyhow!("Error: {} does not exist.", args.path.display()))?;
+        .map_err(|_| anyhow::anyhow!("{} does not exist.", args.path.display()))?;
 
     // Configure and verify the ffmpeg tools before anything uses them
     ffmpeg::configure_tools(args.ffmpeg.clone());
     ffmpeg::check_tools().await?;
 
+    let addr = listen_addr(&args.host, args.port).await?;
+
     println!("Scanning {} for videos...", root.display());
 
-    // Warn if host is not localhost
-    if args.host != "127.0.0.1" && args.host != "::1" && args.host != "localhost" {
+    if !addr.ip().is_loopback() {
         eprintln!(
             "WARNING: Binding to non-localhost address {}. open/open_dir commands will only work from localhost.",
             args.host
@@ -86,17 +87,6 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/events", get(sse_handler))
         .with_state(state);
 
-    // Accept plain IPs (v4 and v6 without brackets) as well as hostnames
-    // like "localhost", which SocketAddr::parse cannot handle.
-    let addr: SocketAddr = match args.host.parse::<IpAddr>() {
-        Ok(ip) => SocketAddr::new(ip, args.port),
-        Err(_) => tokio::net::lookup_host((args.host.as_str(), args.port))
-            .await
-            .ok()
-            .and_then(|mut addrs| addrs.next())
-            .ok_or_else(|| anyhow::anyhow!("Error: cannot resolve host {}", args.host))?,
-    };
-
     println!("\nStarted VidDeck at http://{addr}");
     println!("Press Ctrl+C to stop.");
 
@@ -108,4 +98,50 @@ async fn main() -> anyhow::Result<()> {
     .await?;
 
     Ok(())
+}
+
+/// The address to listen on for `--host` and `--port`. The host is an IP
+/// address, an IPv6 address in brackets as in a URL, or a hostname.
+async fn listen_addr(host: &str, port: u16) -> anyhow::Result<SocketAddr> {
+    if let Some(ip) = parse_ip(host) {
+        return Ok(SocketAddr::new(ip, port));
+    }
+    tokio::net::lookup_host((host, port))
+        .await
+        .ok()
+        .and_then(|mut addrs| addrs.next())
+        .ok_or_else(|| anyhow::anyhow!("cannot resolve host {host}"))
+}
+
+fn parse_ip(host: &str) -> Option<IpAddr> {
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    bare.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn ip_addresses_parse() {
+        assert_eq!(parse_ip("127.0.0.1"), Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        assert_eq!(parse_ip("::1"), Some(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+    }
+
+    #[test]
+    fn bracketed_ipv6_parses() {
+        assert_eq!(parse_ip("[::1]"), Some(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+    }
+
+    #[test]
+    fn hostnames_and_broken_brackets_are_no_ip() {
+        assert_eq!(parse_ip("localhost"), None);
+        assert_eq!(parse_ip("[localhost]"), None);
+        assert_eq!(parse_ip("[::1"), None);
+        assert_eq!(parse_ip("[127.0.0.1]:80"), None);
+    }
 }

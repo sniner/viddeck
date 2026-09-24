@@ -12,7 +12,7 @@ pub struct Args {
     #[arg(long, default_value_t = 8765)]
     pub port: u16,
 
-    /// Host to bind
+    /// Host to bind: an IP address (IPv6 with or without brackets) or a hostname
     #[arg(long, default_value = "127.0.0.1")]
     pub host: String,
 

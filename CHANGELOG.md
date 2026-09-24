@@ -17,6 +17,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `viddeck-v0.5.0-macos-universal`. The Linux binaries are statically linked and run on any
   distribution
 
+### Fixed
+
+- **`--host`** accepts an IPv6 address in brackets again, e.g. `--host [::1]`, which failed
+  with "cannot resolve host" since 0.3.0
+- **Startup warning** about an address other than localhost no longer appears for other
+  loopback addresses, such as `127.0.0.2` or a hostname that resolves to one
+- **Error messages** at startup no longer begin with a doubled "Error:"
+
 ## [0.4.1] - 2026-07-10
 
 ### Changed
