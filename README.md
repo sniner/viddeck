@@ -75,4 +75,5 @@ Once running, VidDeck will output the URL where the web interface is accessible 
 
 ## License
 
-This project is licensed under the BSD 3-Clause License. See the [LICENSE](LICENSE) file for details.
+Apache-2.0. See [LICENSE](LICENSE). Releases up to 0.4.1 were published under the
+BSD 3-Clause License.
