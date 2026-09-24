@@ -26,6 +26,24 @@ installation, pass `--ffmpeg /path/to/ffmpeg` or set the environment variable
 
 ## Installation
 
+### With Homebrew (macOS)
+
+```bash
+brew install sniner/tap/viddeck
+```
+
+Homebrew installs FFmpeg along with it.
+
+### Pre-built binaries
+
+Every [release](https://github.com/sniner/viddeck/releases) includes:
+
+- `viddeck-vX.Y.Z-x86_64-linux-musl` / `-aarch64-linux-musl`: Linux, statically linked
+- `viddeck-vX.Y.Z-macos-universal`: macOS on Apple Silicon and Intel
+- `viddeck-vX.Y.Z-x86_64-windows.exe`: Windows
+
+### From source
+
 You will need the [Rust toolchain](https://rustup.rs/) installed.
 
 Clone the repository and build using Cargo:
