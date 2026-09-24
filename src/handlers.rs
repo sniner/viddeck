@@ -1,30 +1,33 @@
 use axum::{
-    extract::{Path, Query, State, ConnectInfo},
-    response::{Html, IntoResponse, Response, Json, sse::{Event, Sse}},
-    http::{StatusCode, header},
     Form,
+    extract::{ConnectInfo, Path, Query, State},
+    http::{StatusCode, header},
+    response::{
+        Html, IntoResponse, Json, Response,
+        sse::{Event, Sse},
+    },
 };
+use futures_util::stream::Stream;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::{Arc, LazyLock};
-use std::collections::HashMap;
 use std::path::PathBuf;
-use futures_util::stream::Stream;
-use tokio_stream::wrappers::BroadcastStream;
+use std::sync::{Arc, LazyLock};
 use tokio_stream::StreamExt;
-use serde::{Deserialize, Serialize};
+use tokio_stream::wrappers::BroadcastStream;
 
-use tower_http::services::ServeFile;
 use tower::ServiceExt;
+use tower_http::services::ServeFile;
 
+use axum::body::Body;
 use tokio::sync::Semaphore;
 use tokio_util::io::ReaderStream;
-use axum::body::Body;
 
-use crate::state::AppState;
-use crate::assets::{STYLESHEET, JAVASCRIPT, LOGO_SVG};
-use crate::html::generate_shell_html;
+use crate::assets::{JAVASCRIPT, LOGO_SVG, STYLESHEET};
 use crate::ffmpeg::{is_browser_compatible_video, render_thumb, transcode_video};
+use crate::html::generate_shell_html;
+use crate::state::AppState;
 use base64::Engine;
 
 // --- Index (HTML shell) ---
@@ -36,24 +39,33 @@ pub async fn index_handler() -> impl IntoResponse {
 // --- Static assets ---
 
 pub async fn style_handler() -> impl IntoResponse {
-    ([
-        (header::CONTENT_TYPE, "text/css"),
-        (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
-    ], STYLESHEET)
+    (
+        [
+            (header::CONTENT_TYPE, "text/css"),
+            (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate"),
+        ],
+        STYLESHEET,
+    )
 }
 
 pub async fn script_handler() -> impl IntoResponse {
-    ([
-        (header::CONTENT_TYPE, "application/javascript"),
-        (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
-    ], JAVASCRIPT)
+    (
+        [
+            (header::CONTENT_TYPE, "application/javascript"),
+            (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate"),
+        ],
+        JAVASCRIPT,
+    )
 }
 
 pub async fn logo_handler() -> impl IntoResponse {
-    ([
-        (header::CONTENT_TYPE, "image/svg+xml"),
-        (header::CACHE_CONTROL, "public, max-age=86400")
-    ], LOGO_SVG)
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        LOGO_SVG,
+    )
 }
 
 // --- /api/videos ---
@@ -87,9 +99,7 @@ struct ApiChapter {
     title: String,
 }
 
-pub async fn api_videos_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_videos_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let scanning = state.scanning.load(std::sync::atomic::Ordering::Relaxed);
     let root = state.root.to_string_lossy().to_string();
 
@@ -97,23 +107,31 @@ pub async fn api_videos_handler(
     let mut api_videos = HashMap::with_capacity(videos.len());
 
     for (id, entry) in videos.iter() {
-        let chapters = entry.meta.chapters.iter().map(|ch| ApiChapter {
-            start: ch.start,
-            end: ch.end,
-            title: ch.title.clone(),
-        }).collect();
+        let chapters = entry
+            .meta
+            .chapters
+            .iter()
+            .map(|ch| ApiChapter {
+                start: ch.start,
+                end: ch.end,
+                title: ch.title.clone(),
+            })
+            .collect();
 
-        api_videos.insert(id.clone(), ApiVideoEntry {
-            rel_path: entry.rel_path.to_string_lossy().to_string(),
-            duration: entry.meta.duration,
-            size: entry.meta.size,
-            width: entry.meta.width,
-            height: entry.meta.height,
-            fps: entry.meta.fps,
-            codec: entry.meta.codec.clone(),
-            audio_codecs: entry.meta.audio_codecs.clone(),
-            chapters,
-        });
+        api_videos.insert(
+            id.clone(),
+            ApiVideoEntry {
+                rel_path: entry.rel_path.to_string_lossy().to_string(),
+                duration: entry.meta.duration,
+                size: entry.meta.size,
+                width: entry.meta.width,
+                height: entry.meta.height,
+                fps: entry.meta.fps,
+                codec: entry.meta.codec.clone(),
+                audio_codecs: entry.meta.audio_codecs.clone(),
+                chapters,
+            },
+        );
     }
 
     Json(ApiVideosResponse {
@@ -136,34 +154,42 @@ pub struct ThumbParams {
 
 use moka::future::Cache;
 
-static THUMB_CACHE: LazyLock<Cache<String, Vec<u8>>> = LazyLock::new(|| {
-    Cache::builder()
-        .max_capacity(512)
-        .build()
-});
+static THUMB_CACHE: LazyLock<Cache<String, Vec<u8>>> =
+    LazyLock::new(|| Cache::builder().max_capacity(512).build());
 
 pub async fn thumb_handler(
     State(state): State<Arc<AppState>>,
     Path((id, idx_str)): Path<(String, String)>,
     Query(params): Query<ThumbParams>,
-) ->  Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, StatusCode> {
     let mode = params.mode.unwrap_or_else(|| "percent".to_string());
     let offset = params.offset.unwrap_or(50.0);
     let mut width = params.width.unwrap_or(1280);
 
     // Parse idx from "0.jpg" -> 0
-    let idx = idx_str.trim_end_matches(".jpg").parse::<usize>()
+    let idx = idx_str
+        .trim_end_matches(".jpg")
+        .parse::<usize>()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Clamp width
-    if width > 1920 { width = 1920; }
-    if width < 100 && width != 0 { width = 640; }
+    if width > 1920 {
+        width = 1920;
+    }
+    if width < 100 && width != 0 {
+        width = 640;
+    }
 
     // Lookup path, chapter and mtime from videos HashMap
     let (path, chapter, modified) = {
         let videos = state.videos.read();
         let entry = videos.get(&id).ok_or(StatusCode::NOT_FOUND)?;
-        let ch = entry.meta.chapters.get(idx).cloned().ok_or(StatusCode::NOT_FOUND)?;
+        let ch = entry
+            .meta
+            .chapters
+            .get(idx)
+            .cloned()
+            .ok_or(StatusCode::NOT_FOUND)?;
         (entry.path.clone(), ch, entry.modified)
     };
 
@@ -196,7 +222,10 @@ pub async fn thumb_handler(
             Ok(([(header::CONTENT_TYPE, "image/jpeg")], data).into_response())
         }
         Err(e) => {
-            eprintln!("[thumb] Failed to render thumbnail for {}: {e}", path.display());
+            eprintln!(
+                "[thumb] Failed to render thumbnail for {}: {e}",
+                path.display()
+            );
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -246,16 +275,23 @@ pub async fn transcode_handler(
     let (path, copy_video) = {
         let videos = state.videos.read();
         let entry = videos.get(&id).ok_or(StatusCode::NOT_FOUND)?;
-        (entry.path.clone(), is_browser_compatible_video(&entry.meta.codec))
+        (
+            entry.path.clone(),
+            is_browser_compatible_video(&entry.meta.codec),
+        )
     };
 
     // The permit must outlive this handler: ffmpeg keeps running while the
     // client consumes the stream, so it is held by the wait task below.
-    let permit = TRANSCODE_SEM.clone().acquire_owned().await
+    let permit = TRANSCODE_SEM
+        .clone()
+        .acquire_owned()
+        .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
     let start_time = params.t.unwrap_or(0.0);
-    let mut child = transcode_video(&path, start_time, copy_video).await
+    let mut child = transcode_video(&path, start_time, copy_video)
+        .await
         .map_err(|e| {
             eprintln!("[transcode] Failed to start ffmpeg: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
@@ -330,7 +366,12 @@ pub async fn api_open_dir_handler(
     open_path(&state, &params.id, true, &addr)
 }
 
-fn open_path(state: &AppState, id: &str, dir: bool, addr: &SocketAddr) -> Result<&'static str, StatusCode> {
+fn open_path(
+    state: &AppState,
+    id: &str,
+    dir: bool,
+    addr: &SocketAddr,
+) -> Result<&'static str, StatusCode> {
     if state.remote || !is_localhost(addr) {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -378,8 +419,12 @@ pub async fn api_rename_handler(
         return Err((StatusCode::FORBIDDEN, "Server is read-only".into()));
     }
 
-    let id = params.get("id").ok_or((StatusCode::BAD_REQUEST, "Missing id".into()))?;
-    let new_name = params.get("new_name").ok_or((StatusCode::BAD_REQUEST, "Missing new_name".into()))?;
+    let id = params
+        .get("id")
+        .ok_or((StatusCode::BAD_REQUEST, "Missing id".into()))?;
+    let new_name = params
+        .get("new_name")
+        .ok_or((StatusCode::BAD_REQUEST, "Missing new_name".into()))?;
 
     // Get old path
     let old_path = {
@@ -399,10 +444,13 @@ pub async fn api_rename_handler(
     let new_path: PathBuf = state.root.join(new_name).components().collect();
 
     // Canonicalize parent to resolve symlinks and verify the path stays within root
-    let parent = new_path.parent()
+    let parent = new_path
+        .parent()
         .ok_or((StatusCode::BAD_REQUEST, "Invalid path".into()))?;
 
-    let canonical_root = state.root.canonicalize()
+    let canonical_root = state
+        .root
+        .canonicalize()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Check containment BEFORE creating directories: a symlink inside the
@@ -410,35 +458,50 @@ pub async fn api_rename_handler(
     // the library even though the rename itself gets rejected afterwards.
     let mut existing = parent;
     while !existing.exists() {
-        existing = existing.parent()
+        existing = existing
+            .parent()
             .ok_or((StatusCode::BAD_REQUEST, "Invalid path".into()))?;
     }
-    let canonical_existing = existing.canonicalize()
+    let canonical_existing = existing
+        .canonicalize()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if !canonical_existing.starts_with(&canonical_root) {
-        return Err((StatusCode::BAD_REQUEST, "Path escapes root directory".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Path escapes root directory".into(),
+        ));
     }
 
     // Create parent dirs if needed
-    tokio::fs::create_dir_all(parent).await
+    tokio::fs::create_dir_all(parent)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let canonical_parent = parent.canonicalize()
+    let canonical_parent = parent
+        .canonicalize()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if !canonical_parent.starts_with(&canonical_root) {
-        return Err((StatusCode::BAD_REQUEST, "Path escapes root directory".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Path escapes root directory".into(),
+        ));
     }
 
     if new_path.exists() {
-         return Err((StatusCode::CONFLICT, "File already exists".into()));
+        return Err((StatusCode::CONFLICT, "File already exists".into()));
     }
 
-    tokio::fs::rename(&old_path, &new_path).await
+    tokio::fs::rename(&old_path, &new_path)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let new_id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(new_path.to_string_lossy().as_bytes());
-    let new_rel_path = new_path.strip_prefix(&state.root).unwrap_or(&new_path).to_path_buf();
+    let new_id = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(new_path.to_string_lossy().as_bytes());
+    let new_rel_path = new_path
+        .strip_prefix(&state.root)
+        .unwrap_or(&new_path)
+        .to_path_buf();
     let rel_path_str = new_rel_path.to_string_lossy().to_string();
 
     {
@@ -464,13 +527,15 @@ pub async fn sse_handler(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = state.tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|res: Result<(), tokio_stream::wrappers::errors::BroadcastStreamRecvError>| {
-        if res.is_ok() {
-            Some(Ok(Event::default().data("refresh")))
-        } else {
-            None
-        }
-    });
+    let stream = BroadcastStream::new(rx).filter_map(
+        |res: Result<(), tokio_stream::wrappers::errors::BroadcastStreamRecvError>| {
+            if res.is_ok() {
+                Some(Ok(Event::default().data("refresh")))
+            } else {
+                None
+            }
+        },
+    );
 
     Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::new())
 }

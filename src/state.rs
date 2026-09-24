@@ -1,9 +1,9 @@
-use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use crate::ffmpeg::VideoMetadata;
 use parking_lot::RwLock;
 use serde::Serialize;
-use crate::ffmpeg::VideoMetadata;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::broadcast;
 
 #[derive(Clone, Serialize, Debug)]

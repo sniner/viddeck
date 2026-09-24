@@ -38,7 +38,8 @@ pub fn generate_shell_html() -> String {
     // The logo template is cloned into the header by script.js: inlined SVG
     // follows the page's CSS variables, which an <img> cannot (Chromium
     // ignores prefers-color-scheme inside SVG images).
-    format!(r#"<!doctype html>
+    format!(
+        r#"<!doctype html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -54,7 +55,9 @@ pub fn generate_shell_html() -> String {
     <script src="/script.js"></script>
 </body>
 </html>
-"#, logo = crate::assets::LOGO_SVG)
+"#,
+        logo = crate::assets::LOGO_SVG
+    )
 }
 
 #[cfg(test)]

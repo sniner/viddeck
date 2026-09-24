@@ -1,12 +1,12 @@
-use std::sync::Arc;
-use std::path::{Path, PathBuf};
-use std::collections::HashSet;
-use walkdir::WalkDir;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use walkdir::WalkDir;
 
-use crate::state::{AppState, VideoEntry};
 use crate::ffmpeg::get_extended_metadata;
+use crate::state::{AppState, VideoEntry};
 
 const VIDEO_EXTENSIONS: &[&str] = &["mkv", "mp4", "m4v", "avi", "mov", "webm"];
 
@@ -97,7 +97,9 @@ pub async fn scan_library(state: Arc<AppState>) {
 
     while join_set.join_next().await.is_some() {}
 
-    state.scanning.store(false, std::sync::atomic::Ordering::Relaxed);
+    state
+        .scanning
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     state.notify_refresh();
 }
 
@@ -111,7 +113,7 @@ pub fn start_watcher(state: Arc<AppState>) {
 
 #[allow(clippy::too_many_lines)]
 async fn run_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
-    use notify::{Watcher, RecursiveMode, EventKind};
+    use notify::{EventKind, RecursiveMode, Watcher};
     use std::time::Duration;
 
     let root = state.root.clone();
@@ -119,8 +121,8 @@ async fn run_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
 
     let root_clone = root.clone();
     let watcher = tokio::task::spawn_blocking(move || {
-        let mut watcher = match notify::recommended_watcher(
-            move |res: notify::Result<notify::Event>| {
+        let mut watcher =
+            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 if let Ok(event) = res {
                     if matches!(event.kind, EventKind::Access(_)) {
                         return;
@@ -129,14 +131,13 @@ async fn run_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
                         let _ = tx.blocking_send(path);
                     }
                 }
-            },
-        ) {
-            Ok(w) => w,
-            Err(e) => {
-                eprintln!("[watcher] Failed to create watcher: {e}");
-                return None;
-            }
-        };
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("[watcher] Failed to create watcher: {e}");
+                    return None;
+                }
+            };
 
         if let Err(e) = watcher.watch(&root_clone, RecursiveMode::Recursive) {
             eprintln!("[watcher] Failed to watch {}: {e}", root_clone.display());
@@ -156,7 +157,9 @@ async fn run_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
     println!("[watcher] Watching {} for changes.", root.display());
 
     loop {
-        let Some(first_path) = rx.recv().await else { break };
+        let Some(first_path) = rx.recv().await else {
+            break;
+        };
 
         let mut pending: HashSet<PathBuf> = HashSet::new();
         pending.insert(first_path);

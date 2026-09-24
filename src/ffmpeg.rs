@@ -1,9 +1,9 @@
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
 use tokio::process::Command;
-use serde::{Deserialize, Serialize};
-use anyhow::{Result, Context};
 
 struct Tools {
     ffmpeg: PathBuf,
@@ -13,7 +13,10 @@ struct Tools {
 static TOOLS: OnceLock<Tools> = OnceLock::new();
 
 fn default_tools() -> Tools {
-    Tools { ffmpeg: "ffmpeg".into(), ffprobe: "ffprobe".into() }
+    Tools {
+        ffmpeg: "ffmpeg".into(),
+        ffprobe: "ffprobe".into(),
+    }
 }
 
 /// Set the ffmpeg binary to use (from `--ffmpeg` / `VIDDECK_FFMPEG`).
@@ -22,7 +25,8 @@ fn default_tools() -> Tools {
 pub fn configure_tools(ffmpeg: Option<PathBuf>) {
     let tools = match ffmpeg {
         Some(ffmpeg) => {
-            let sibling = ffmpeg.parent()
+            let sibling = ffmpeg
+                .parent()
                 .map(|dir| dir.join(format!("ffprobe{}", std::env::consts::EXE_SUFFIX)));
             let ffprobe = match sibling {
                 Some(p) if p.is_file() => p,
@@ -50,10 +54,17 @@ const MIN_FFMPEG_VERSION: (u64, u64) = (4, 3);
 /// Check that ffmpeg/ffprobe run, log the version, and warn if it is
 /// older than what our command lines were written for.
 pub async fn check_tools() -> Result<()> {
-    let output = Command::new(ffmpeg_path()).arg("-version")
+    let output = Command::new(ffmpeg_path())
+        .arg("-version")
         .stdin(Stdio::null())
-        .output().await
-        .with_context(|| format!("Failed to run {} — is FFmpeg installed?", ffmpeg_path().display()))?;
+        .output()
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to run {} — is FFmpeg installed?",
+                ffmpeg_path().display()
+            )
+        })?;
     let text = String::from_utf8_lossy(&output.stdout);
     let banner = text.lines().next().unwrap_or_default();
     println!("[ffmpeg] {banner}");
@@ -69,10 +80,17 @@ pub async fn check_tools() -> Result<()> {
         None => eprintln!("[ffmpeg] Could not parse the version — continuing anyway."),
     }
 
-    Command::new(ffprobe_path()).arg("-version")
+    Command::new(ffprobe_path())
+        .arg("-version")
         .stdin(Stdio::null())
-        .output().await
-        .with_context(|| format!("Failed to run {} — is ffprobe installed?", ffprobe_path().display()))?;
+        .output()
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to run {} — is ffprobe installed?",
+                ffprobe_path().display()
+            )
+        })?;
     Ok(())
 }
 
@@ -153,10 +171,14 @@ struct FFProbeTags {
 pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
     let output = Command::new(ffprobe_path())
         .args([
-            "-v", "error",
-            "-print_format", "json",
-            "-show_entries", "format=duration,size,bit_rate",
-            "-show_entries", "stream=codec_type,codec_name,width,height,avg_frame_rate",
+            "-v",
+            "error",
+            "-print_format",
+            "json",
+            "-show_entries",
+            "format=duration,size,bit_rate",
+            "-show_entries",
+            "stream=codec_type,codec_name,width,height,avg_frame_rate",
             "-show_chapters",
         ])
         .arg(path)
@@ -173,19 +195,28 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
 
     let raw: FFProbeOutput = serde_json::from_slice(&output.stdout)?;
 
-    let fmt = raw.format.unwrap_or(FFProbeFormat { duration: "0".into(), size: "0".into() });
+    let fmt = raw.format.unwrap_or(FFProbeFormat {
+        duration: "0".into(),
+        size: "0".into(),
+    });
     let duration = fmt.duration.parse::<f64>().unwrap_or(0.0);
     let size = fmt.size.parse::<u64>().unwrap_or(0);
 
     let (width, height, fps_str, codec, audio_codecs) = if let Some(streams) = raw.streams {
         let video = streams.iter().find(|s| s.codec_type == "video");
         let (w, h, fps_str, vc) = if let Some(s) = video {
-            (s.width.unwrap_or(0), s.height.unwrap_or(0), s.avg_frame_rate.clone(), s.codec_name.clone())
+            (
+                s.width.unwrap_or(0),
+                s.height.unwrap_or(0),
+                s.avg_frame_rate.clone(),
+                s.codec_name.clone(),
+            )
         } else {
             (0, 0, "0/0".to_string(), "unknown".to_string())
         };
         let mut seen = std::collections::HashSet::new();
-        let audio: Vec<String> = streams.iter()
+        let audio: Vec<String> = streams
+            .iter()
             .filter(|s| s.codec_type == "audio")
             .map(|s| s.codec_name.to_uppercase())
             .filter(|c| seen.insert(c.clone()))
@@ -230,13 +261,17 @@ pub async fn get_extended_metadata(path: &Path) -> Result<VideoMetadata> {
     chapters.sort_by(|a, b| a.start.total_cmp(&b.start));
 
     if chapters.is_empty() && duration > 0.0 {
-        chapters.push(Chapter { start: 0.0, end: duration, title: String::new() });
+        chapters.push(Chapter {
+            start: 0.0,
+            end: duration,
+            title: String::new(),
+        });
     }
 
     for i in 0..chapters.len().saturating_sub(1) {
         if chapters[i].end <= chapters[i].start {
-             let next_start = chapters[i+1].start;
-             chapters[i].end = (next_start - 0.1).max(chapters[i].start);
+            let next_start = chapters[i + 1].start;
+            chapters[i].end = (next_start - 0.1).max(chapters[i].start);
         }
     }
 
@@ -314,11 +349,27 @@ impl HwEncoder {
     /// installed ffmpeg version fails the probe instead of the playback.
     fn encoder_args(&self) -> &'static [&'static str] {
         match self {
-            HwEncoder::Vaapi => &["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "24"],
+            HwEncoder::Vaapi => &[
+                "-vf",
+                "format=nv12,hwupload",
+                "-c:v",
+                "h264_vaapi",
+                "-qp",
+                "24",
+            ],
             HwEncoder::VideoToolbox => &["-c:v", "h264_videotoolbox", "-q:v", "65"],
-            HwEncoder::Amf => &["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "24", "-qp_p", "24"],
+            HwEncoder::Amf => &[
+                "-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "24", "-qp_p", "24",
+            ],
             HwEncoder::Nvenc => &["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "24"],
-            HwEncoder::Qsv => &["-c:v", "h264_qsv", "-preset", "fast", "-global_quality", "24"],
+            HwEncoder::Qsv => &[
+                "-c:v",
+                "h264_qsv",
+                "-preset",
+                "fast",
+                "-global_quality",
+                "24",
+            ],
             HwEncoder::Libx264 => &["-c:v", "libx264", "-preset", "fast", "-crf", "22"],
         }
     }
@@ -334,10 +385,17 @@ fn test_encoder(variant: &HwEncoder) -> bool {
     let mut cmd = std::process::Command::new(ffmpeg_path());
     cmd.args(["-v", "error"]);
     cmd.args(variant.pre_input_args());
-    cmd.args(["-f", "lavfi", "-i", "testsrc=duration=0.1:size=320x240:rate=30"]);
+    cmd.args([
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=duration=0.1:size=320x240:rate=30",
+    ]);
     cmd.args(variant.encoder_args());
     cmd.args(["-f", "null", "-"]);
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     cmd.status().is_ok_and(|s| s.success())
 }
 
@@ -384,7 +442,11 @@ fn hw_encoder() -> &'static HwEncoder {
     ENCODER.get_or_init(detect_hw_encoder)
 }
 
-pub async fn transcode_video(path: &Path, start_time: f64, copy_video: bool) -> Result<tokio::process::Child> {
+pub async fn transcode_video(
+    path: &Path,
+    start_time: f64,
+    copy_video: bool,
+) -> Result<tokio::process::Child> {
     let mut cmd = Command::new(ffmpeg_path());
     cmd.args(["-v", "error"]);
 
@@ -420,19 +482,27 @@ pub async fn transcode_video(path: &Path, start_time: f64, copy_video: bool) -> 
         }
     }
     cmd.args([
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-af", "aresample=async=1",
-        "-avoid_negative_ts", "make_zero",
-        "-f", "mp4",
-        "-movflags", "frag_keyframe+empty_moov",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-af",
+        "aresample=async=1",
+        "-avoid_negative_ts",
+        "make_zero",
+        "-f",
+        "mp4",
+        "-movflags",
+        "frag_keyframe+empty_moov",
         "pipe:1",
     ]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     cmd.stdin(Stdio::null());
 
-    let child = cmd.spawn().context("Failed to spawn ffmpeg for transcoding")?;
+    let child = cmd
+        .spawn()
+        .context("Failed to spawn ffmpeg for transcoding")?;
     Ok(child)
 }
 
@@ -455,19 +525,34 @@ mod tests {
 
     #[test]
     fn version_release_build() {
-        assert_eq!(parse_ffmpeg_version("ffmpeg version 6.1.1 Copyright (c) 2000-2023"), Some((6, 1)));
-        assert_eq!(parse_ffmpeg_version("ffmpeg version 4.2.7-0ubuntu0.1 Copyright"), Some((4, 2)));
+        assert_eq!(
+            parse_ffmpeg_version("ffmpeg version 6.1.1 Copyright (c) 2000-2023"),
+            Some((6, 1))
+        );
+        assert_eq!(
+            parse_ffmpeg_version("ffmpeg version 4.2.7-0ubuntu0.1 Copyright"),
+            Some((4, 2))
+        );
     }
 
     #[test]
     fn version_tagged_build() {
-        assert_eq!(parse_ffmpeg_version("ffmpeg version n7.0-31-g1652f2f0ba Copyright"), Some((7, 0)));
-        assert_eq!(parse_ffmpeg_version("ffmpeg version 6.0-static https://johnvansickle.com/ffmpeg/"), Some((6, 0)));
+        assert_eq!(
+            parse_ffmpeg_version("ffmpeg version n7.0-31-g1652f2f0ba Copyright"),
+            Some((7, 0))
+        );
+        assert_eq!(
+            parse_ffmpeg_version("ffmpeg version 6.0-static https://johnvansickle.com/ffmpeg/"),
+            Some((6, 0))
+        );
     }
 
     #[test]
     fn version_git_snapshot_is_none() {
-        assert_eq!(parse_ffmpeg_version("ffmpeg version N-112345-g0123456789 Copyright"), None);
+        assert_eq!(
+            parse_ffmpeg_version("ffmpeg version N-112345-g0123456789 Copyright"),
+            None
+        );
         assert_eq!(parse_ffmpeg_version(""), None);
     }
 }
