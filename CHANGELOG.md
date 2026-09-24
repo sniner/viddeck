@@ -2,6 +2,13 @@
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- **Messages**: `--help` and the messages at startup are reworded. For an address other than
+  localhost, VidDeck now also points out `--remote`
+
 ## [0.5.0] - 2026-09-25
 
 ### Added

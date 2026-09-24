@@ -42,18 +42,24 @@ async fn main() -> anyhow::Result<()> {
 
     if !addr.ip().is_loopback() {
         eprintln!(
-            "WARNING: Binding to non-localhost address {}. open/open_dir commands will only work from localhost.",
+            "WARNING: {} can be reached from other machines, and VidDeck has no authentication.",
             args.host
         );
         if !args.read_only {
             eprintln!(
-                "WARNING: File renaming is enabled for all clients. Use --read-only to disable."
+                "WARNING: anyone who can reach it can rename files; --read-only prevents that."
+            );
+        }
+        if !args.remote {
+            eprintln!(
+                "Note: the System and Folder buttons work only in a browser on this machine; \
+                 --remote replaces them with playback in the browser."
             );
         }
     }
 
     if args.remote {
-        println!("Remote mode: system open commands disabled.");
+        println!("Remote mode: videos play in the browser, the System and Folder buttons are off.");
     }
 
     // Init State
@@ -87,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/events", get(sse_handler))
         .with_state(state);
 
-    println!("\nStarted VidDeck at http://{addr}");
+    println!("\nVidDeck is running at http://{addr}");
     println!("Press Ctrl+C to stop.");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

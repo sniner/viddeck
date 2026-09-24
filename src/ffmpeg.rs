@@ -61,7 +61,7 @@ pub async fn check_tools() -> Result<()> {
         .await
         .with_context(|| {
             format!(
-                "Failed to run {} — is FFmpeg installed?",
+                "cannot run {}: install FFmpeg, or name the ffmpeg program with --ffmpeg",
                 ffmpeg_path().display()
             )
         })?;
@@ -72,12 +72,12 @@ pub async fn check_tools() -> Result<()> {
     match parse_ffmpeg_version(banner) {
         Some(version) if version < MIN_FFMPEG_VERSION => {
             eprintln!(
-                "WARNING: FFmpeg {}.{} is older than {}.{}; some hardware encoder options may not exist. Transcoding falls back to software encoding if the probe fails.",
+                "WARNING: FFmpeg {}.{} is older than {}.{}; hardware encoders may not work with it, and transcoding then uses software encoding.",
                 version.0, version.1, MIN_FFMPEG_VERSION.0, MIN_FFMPEG_VERSION.1
             );
         }
         Some(_) => {}
-        None => eprintln!("[ffmpeg] Could not parse the version — continuing anyway."),
+        None => eprintln!("[ffmpeg] Version not recognized, so it is not checked."),
     }
 
     Command::new(ffprobe_path())
@@ -87,7 +87,7 @@ pub async fn check_tools() -> Result<()> {
         .await
         .with_context(|| {
             format!(
-                "Failed to run {} — is ffprobe installed?",
+                "cannot run {}: it comes with FFmpeg; install FFmpeg, or name the ffmpeg program with --ffmpeg",
                 ffprobe_path().display()
             )
         })?;

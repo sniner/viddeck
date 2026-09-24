@@ -106,7 +106,7 @@ pub async fn scan_library(state: Arc<AppState>) {
 pub fn start_watcher(state: Arc<AppState>) {
     tokio::spawn(async move {
         if let Err(e) = run_watcher(state).await {
-            eprintln!("[watcher] Watcher stopped with error: {e}");
+            eprintln!("[watcher] Stopped: {e}");
         }
     });
 }
@@ -150,7 +150,9 @@ async fn run_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
     .expect("watcher setup task panicked");
 
     if watcher.is_none() {
-        anyhow::bail!("File watching disabled due to setup error.");
+        anyhow::bail!(
+            "changes to the directory are not followed; the library shows what the startup scan found"
+        );
     }
     let _watcher = watcher; // keep alive
 

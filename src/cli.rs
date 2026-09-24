@@ -4,31 +4,31 @@ use std::path::PathBuf;
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    /// Root directory to scan
+    /// Directory with the videos
     #[arg(default_value = ".")]
     pub path: PathBuf,
 
-    /// Port to bind
+    /// Port to listen on
     #[arg(long, default_value_t = 8765)]
     pub port: u16,
 
-    /// Host to bind: an IP address (IPv6 with or without brackets) or a hostname
+    /// Address to listen on: an IP address (IPv6 with or without brackets) or a hostname
     #[arg(long, default_value = "127.0.0.1")]
     pub host: String,
 
-    /// Watch for filesystem changes
+    /// Follow changes to the directory while running
     #[arg(short, long)]
     pub watch: bool,
 
-    /// Remote mode: disable system open commands (no local player/folder buttons)
+    /// Replace the System, Browser and Folder buttons with playback in the browser
     #[arg(long)]
     pub remote: bool,
 
-    /// Read-only mode: disable file renaming
+    /// Disable renaming
     #[arg(long)]
     pub read_only: bool,
 
-    /// Path to the ffmpeg binary (ffprobe is expected next to it)
+    /// The ffmpeg program to use; ffprobe is taken from the same directory
     #[arg(long, env = "VIDDECK_FFMPEG")]
     pub ffmpeg: Option<PathBuf>,
 }
